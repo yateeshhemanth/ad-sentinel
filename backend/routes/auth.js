@@ -173,14 +173,25 @@ router.post("/change-password", authenticate, [
   body("currentPassword").notEmpty(),
   body("newPassword").isLength({ min: 8 }),
 ], async (req, res) => {
-  const { currentPassword, newPassword } = req.body;
-  const { rows } = await query("SELECT password_hash FROM users WHERE id = $1", [req.user.id]);
-  const valid = await bcrypt.compare(currentPassword, rows[0].password_hash);
-  if (!valid) return res.status(400).json({ error: "Current password is incorrect" });
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
-  const hash = await bcrypt.hash(newPassword, 12);
-  await query("UPDATE users SET password_hash = $1 WHERE id = $2", [hash, req.user.id]);
-  res.json({ message: "Password changed successfully" });
+  const { currentPassword, newPassword } = req.body;
+
+  try {
+    const { rows } = await query("SELECT password_hash FROM users WHERE id = $1", [req.user.id]);
+    if (!rows.length) return res.status(404).json({ error: "User not found" });
+
+    const valid = await bcrypt.compare(currentPassword, rows[0].password_hash);
+    if (!valid) return res.status(400).json({ error: "Current password is incorrect" });
+
+    const hash = await bcrypt.hash(newPassword, 12);
+    await query("UPDATE users SET password_hash = $1 WHERE id = $2", [hash, req.user.id]);
+    res.json({ message: "Password changed successfully" });
+  } catch (err) {
+    logger.error("Change password error:", err);
+    res.status(500).json({ error: "Failed to change password" });
+  }
 });
 
 // ── Helpers ────────────────────────────────────────────────────────
