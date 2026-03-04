@@ -1,0 +1,103 @@
+version: "3.9"
+
+services:
+
+  # ── PostgreSQL ──────────────────────────────────────────────────────
+  postgres:
+    image: postgres:15-alpine
+    container_name: adsentinel-db
+    restart: unless-stopped
+    # Hardcoded here as safe defaults — overridden by env_file in dev/prod.
+    # MUST be in environment: block (not just env_file) because postgres
+    # image only reads POSTGRES_* from its process environment, not from
+    # a file. Podman's env_file on the service handles the override.
+    environment:
+      POSTGRES_DB:       adsentinel
+      POSTGRES_USER:     adsentinel
+      POSTGRES_PASSWORD: adsentinel_changeme
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backend/db/init.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
+    healthcheck:
+      # Use pg_isready without -d flag — checks server is accepting connections
+      test: ["CMD-SHELL", "pg_isready -U adsentinel"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
+    networks:
+      - adsentinel
+
+  # ── Redis ───────────────────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: adsentinel-redis
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    networks:
+      - adsentinel
+
+  # ── Backend API ─────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: adsentinel-api
+    restart: unless-stopped
+    environment:
+      PORT:       4000
+      DB_HOST:    adsentinel-db
+      DB_PORT:    5432
+      REDIS_HOST: adsentinel-redis
+      REDIS_PORT: 6379
+    volumes:
+      - report_output:/app/reports
+      - logo_uploads:/app/uploads/logos
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - adsentinel
+
+  # ── Frontend ────────────────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        REACT_APP_API_URL: /api
+    container_name: adsentinel-ui
+    restart: unless-stopped
+    volumes:
+      - logo_uploads:/usr/share/nginx/html/uploads/logos:ro
+    depends_on:
+      - backend
+    networks:
+      - adsentinel
+
+  # ── Nginx Reverse Proxy ─────────────────────────────────────────────
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: adsentinel-proxy
+    restart: unless-stopped
+    volumes:
+      - report_output:/var/www/reports:ro
+    depends_on:
+      - frontend
+    networks:
+      - adsentinel
+
+volumes:
+  postgres_data:
+    name: adsentinel_postgres
+  redis_data:
+    name: adsentinel_redis
+  report_output:
+    name: adsentinel_reports
+  logo_uploads:
+    name: adsentinel_logos
+
+networks:
+  adsentinel:
+    driver: bridge

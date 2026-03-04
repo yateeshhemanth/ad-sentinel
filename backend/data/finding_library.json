@@ -1,0 +1,1283 @@
+{
+  "version": "1.0.0",
+  "last_updated": "2026-02",
+  "description": "ADSentinel finding library — AD security checks mapped to CIS, NIST, ISO 27001, SOC2, MITRE ATT&CK",
+  "findings": [
+    {
+      "id": "AD-PWD-001",
+      "category": "password",
+      "title": "Account with non-expiring password",
+      "description": "The DONT_EXPIRE_PASSWORD flag (ADS_UF_DONT_EXPIRE_PASSWD) is set. The password never rotates, increasing exposure window if the credential is compromised.",
+      "severity": "high",
+      "ldap_filter": "(&(objectClass=user)(userAccountControl:1.2.840.113556.1.4.803:=65536)(!(objectClass=computer)))",
+      "ldap_attributes": [
+        "sAMAccountName",
+        "userAccountControl",
+        "pwdLastSet",
+        "memberOf"
+      ],
+      "remediation": "Remove the DONT_EXPIRE_PASSWORD flag via ADUC or: Set-ADUser <user> -PasswordNeverExpires $false. Exception: service accounts managed by a PAM vault.",
+      "risk_score": 7.2,
+      "compliance": {
+        "cis_v8": [
+          "5.2"
+        ],
+        "nist_800_53": [
+          "IA-5",
+          "IA-5(1)"
+        ],
+        "iso_27001": [
+          "A.9.4.3"
+        ],
+        "soc2": [
+          "CC6.1"
+        ],
+        "mitre": [
+          {
+            "id": "T1078",
+            "name": "Valid Accounts"
+          },
+          {
+            "id": "T1078.002",
+            "name": "Domain Accounts"
+          }
+        ]
+      },
+      "threshold_param": "enableNonExpiringCheck",
+      "binary": true
+    },
+    {
+      "id": "AD-PWD-002",
+      "category": "password",
+      "title": "Account with blank / null password",
+      "description": "The PASSWD_NOTREQD flag is set, or the password hash is LM empty hash. Account can be authenticated without a password.",
+      "severity": "critical",
+      "ldap_filter": "(&(objectClass=user)(userAccountControl:1.2.840.113556.1.4.803:=32)(!(objectClass=computer)))",
+      "ldap_attributes": [
+        "sAMAccountName",
+        "userAccountControl",
+        "distinguishedName"
+      ],
+      "remediation": "Set a strong password immediately. Clear the PASSWD_NOTREQD flag. Investigate why it was set.",
+      "risk_score": 9.8,
+      "compliance": {
+        "cis_v8": [
+          "5.2",
+          "5.3"
+        ],
+        "nist_800_53": [
+          "IA-5",
+          "AC-2"
+        ],
+        "iso_27001": [
+          "A.9.4.3",
+          "A.9.2.1"
+        ],
+        "soc2": [
+          "CC6.1",
+          "CC6.2"
+        ],
+        "mitre": [
+          {
+            "id": "T1110",
+            "name": "Brute Force"
+          },
+          {
+            "id": "T1110.003",
+            "name": "Password Spraying"
+          }
+        ]
+      },
+      "threshold_param": "enableBlankPasswordCheck",
+      "binary": true
+    },
+    {
+      "id": "AD-PWD-003",
+      "category": "password",
+      "title": "Password not required flag set",
+      "description": "UF_PASSWD_NOTREQD (0x20) is set. The domain password policy is not enforced for this account.",
+      "severity": "critical",
+      "ldap_filter": "(&(objectClass=user)(userAccountControl:1.2.840.113556.1.4.803:=32))",
+      "ldap_attributes": [
+        "sAMAccountName",
+        "userAccountControl",
+        "description"
+      ],
+      "remediation": "Clear the flag: Get-ADUser <user> | Set-ADUser -PasswordNotRequired $false",
+      "risk_score": 9.5,
+      "compliance": {
+        "cis_v8": [
+          "5.2"
+        ],
+        "nist_800_53": [
+          "IA-5"
+        ],
+        "iso_27001": [
+          "A.9.4.3"
+        ],
+        "soc2": [
+          "CC6.1"
+        ],
+        "mitre": [
+          {
+            "id": "T1078",
+            "name": "Valid Accounts"
+          }
+        ]
+      },
+      "threshold_param": "enablePasswdNotReqdCheck",
+      "binary": true
+    },
+    {
+      "id": "AD-PWD-004",
+      "category": "password",
+      "title": "Password older than 180 days",
+      "description": "Account password has not been changed in over 180 days, significantly exceeding recommended rotation schedules.",
+      "severity": "high",
+      "ldap_filter": "(&(objectClass=user)(!(userAccountControl:1.2.840.113556.1.4.803:=2))(pwdLastSet<=__180_DAYS_AGO__))",
+      "ldap_attributes": [
+        "sAMAccountName",
+        "pwdLastSet",
+        "lastLogonTimestamp",
+        "department"
+      ],
+      "remediation": "Force password reset at next logon: Set-ADUser <user> -ChangePasswordAtLogon $true",
+      "risk_score": 6.5,
+      "compliance": {
+        "cis_v8": [
+          "5.2"
+        ],
+        "nist_800_53": [
+          "IA-5(1)"
+        ],
+        "iso_27001": [
+          "A.9.4.3"
+        ],
+        "soc2": [
+          "CC6.1"
+        ],
+        "mitre": [
+          {
+            "id": "T1078",
+            "name": "Valid Accounts"
+          },
+          {
+            "id": "T1110",
+            "name": "Brute Force"
+          }
+        ]
+      },
+      "threshold_param": "maxPasswordAge",
+      "binary": false
+    },
+    {
+      "id": "AD-PWD-005",
+      "category": "password",
+      "title": "Reversible password encryption enabled",
+      "description": "The ENCRYPTED_TEXT_PASSWORD_ALLOWED flag stores passwords using reversible encryption — equivalent to plaintext storage.",
+      "severity": "critical",
+      "ldap_filter": "(&(objectClass=user)(userAccountControl:1.2.840.113556.1.4.803:=128))",
+      "ldap_attributes": [
+        "sAMAccountName",
+        "userAccountControl"
+      ],
+      "remediation": "Disable reversible encryption and force a password reset immediately.",
+      "risk_score": 9,
+      "compliance": {
+        "cis_v8": [
+          "3.11",
+          "5.2"
+        ],
+        "nist_800_53": [
+          "IA-5",
+          "SC-28"
+        ],
+        "iso_27001": [
+          "A.10.1.1",
+          "A.9.4.3"
+        ],
+        "soc2": [
+          "CC6.1",
+          "CC6.7"
+        ],
+        "mitre": [
+          {
+            "id": "T1003",
+            "name": "OS Credential Dumping"
+          },
+          {
+            "id": "T1003.002",
+            "name": "SAM"
+          }
+        ]
+      },
+      "threshold_param": "enableReversibleEncCheck",
+      "binary": true
+    },
+    {
+      "id": "AD-PRIV-001",
+      "category": "privilege",
+      "title": "Excessive Domain Admin membership",
+      "description": "More than the expected number of accounts in the Domain Admins group. Each admin account is a high-value target.",
+      "severity": "high",
+      "ldap_filter": "(&(objectClass=user)(memberOf=CN=Domain Admins,CN=Users,__DC__))",
+      "ldap_attributes": [
+        "sAMAccountName",
+        "memberOf",
+        "lastLogonTimestamp",
+        "pwdLastSet"
+      ],
+      "remediation": "Review and reduce Domain Admin membership. Use tiered admin model. Require JIT access for admin tasks.",
+      "risk_score": 8,
+      "threshold": {
+        "param": "maxDomainAdmins",
+        "default": 5
+      },
+      "compliance": {
+        "cis_v8": [
+          "5.4",
+          "6.8"
+        ],
+        "nist_800_53": [
+          "AC-6",
+          "AC-6(5)",
+          "AC-2"
+        ],
+        "iso_27001": [
+          "A.9.2.3",
+          "A.9.4.4"
+        ],
+        "soc2": [
+          "CC6.3"
+        ],
+        "mitre": [
+          {
+            "id": "T1078.002",
+            "name": "Domain Accounts"
+          },
+          {
+            "id": "T1098",
+            "name": "Account Manipulation"
+          }
+        ]
+      },
+      "threshold_param": "maxDomainAdmins",
+      "binary": false
+    },
+    {
+      "id": "AD-PRIV-002",
+      "category": "privilege",
+      "title": "Kerberoastable service account",
+      "description": "User accounts with ServicePrincipalName (SPN) set are vulnerable to offline password cracking via Kerberoasting (T1558.003).",
+      "severity": "high",
+      "ldap_filter": "(&(objectClass=user)(servicePrincipalName=*)(!(cn=krbtgt))(!(userAccountControl:1.2.840.113556.1.4.803:=2)))",
+      "ldap_attributes": [
+        "sAMAccountName",
+        "servicePrincipalName",
+        "memberOf",
+        "pwdLastSet"
+      ],
+      "remediation": "Use Group Managed Service Accounts (gMSA). For existing accounts: use strong 25+ char passwords and monitor TGS requests.",
+      "risk_score": 8.5,
+      "compliance": {
+        "cis_v8": [
+          "5.4",
+          "4.7"
+        ],
+        "nist_800_53": [
+          "IA-5",
+          "AC-6"
+        ],
+        "iso_27001": [
+          "A.9.2.3"
+        ],
+        "soc2": [
+          "CC6.1"
+        ],
+        "mitre": [
+          {
+            "id": "T1558",
+            "name": "Steal or Forge Kerberos Tickets"
+          },
+          {
+            "id": "T1558.003",
+            "name": "Kerberoasting"
+          }
+        ]
+      },
+      "threshold_param": "enableKerberoastCheck",
+      "binary": true
+    },
+    {
+      "id": "AD-PRIV-003",
+      "category": "privilege",
+      "title": "AS-REP Roastable account",
+      "description": "Kerberos pre-authentication is disabled (DONT_REQ_PREAUTH). An attacker can request an AS-REP hash offline without knowing the password.",
+      "severity": "high",
+      "ldap_filter": "(&(objectClass=user)(userAccountControl:1.2.840.113556.1.4.803:=4194304))",
+      "ldap_attributes": [
+        "sAMAccountName",
+        "userAccountControl",
+        "memberOf"
+      ],
+      "remediation": "Enable pre-authentication: Set-ADAccountControl <user> -DoesNotRequirePreAuth $false",
+      "risk_score": 8.2,
+      "compliance": {
+        "cis_v8": [
+          "5.4"
+        ],
+        "nist_800_53": [
+          "IA-3",
+          "IA-5"
+        ],
+        "iso_27001": [
+          "A.9.4.2"
+        ],
+        "soc2": [
+          "CC6.1"
+        ],
+        "mitre": [
+          {
+            "id": "T1558",
+            "name": "Steal or Forge Kerberos Tickets"
+          },
+          {
+            "id": "T1558.004",
+            "name": "AS-REP Roasting"
+          }
+        ]
+      },
+      "threshold_param": "enableAsrepCheck",
+      "binary": true
+    },
+    {
+      "id": "AD-PRIV-004",
+      "category": "privilege",
+      "title": "AdminCount=1 on non-admin account",
+      "description": "AdminCount=1 means the account was once added to a privileged group. SDProp may have applied restrictive ACLs. Accounts may retain hidden privileges.",
+      "severity": "medium",
+      "ldap_filter": "(&(objectClass=user)(adminCount=1)(!(memberOf=CN=Domain Admins,CN=Users,__DC__)))",
+      "ldap_attributes": [
+        "sAMAccountName",
+        "adminCount",
+        "memberOf",
+        "distinguishedName"
+      ],
+      "remediation": "Verify the account no longer needs elevated access. Clear adminCount and reset ACL inheritance if appropriate.",
+      "risk_score": 5.5,
+      "compliance": {
+        "cis_v8": [
+          "5.4",
+          "6.8"
+        ],
+        "nist_800_53": [
+          "AC-6",
+          "AC-2(7)"
+        ],
+        "iso_27001": [
+          "A.9.2.3"
+        ],
+        "soc2": [
+          "CC6.3"
+        ],
+        "mitre": [
+          {
+            "id": "T1078",
+            "name": "Valid Accounts"
+          },
+          {
+            "id": "T1069",
+            "name": "Permission Groups Discovery"
+          }
+        ]
+      },
+      "threshold_param": "enableAdminCountCheck",
+      "binary": true
+    },
+    {
+      "id": "AD-PRIV-005",
+      "category": "privilege",
+      "title": "Unconstrained delegation enabled",
+      "description": "Account has TrustedForDelegation set. If compromised, an attacker can impersonate any user to any service in the domain.",
+      "severity": "critical",
+      "ldap_filter": "(&(objectClass=user)(userAccountControl:1.2.840.113556.1.4.803:=524288)(!(primaryGroupID=516))(!(primaryGroupID=521)))",
+      "ldap_attributes": [
+        "sAMAccountName",
+        "userAccountControl",
+        "servicePrincipalName"
+      ],
+      "remediation": "Move to constrained or resource-based constrained delegation. Mark sensitive accounts as 'Account is sensitive and cannot be delegated'.",
+      "risk_score": 9.3,
+      "compliance": {
+        "cis_v8": [
+          "5.4",
+          "6.8"
+        ],
+        "nist_800_53": [
+          "AC-6",
+          "IA-2"
+        ],
+        "iso_27001": [
+          "A.9.2.3",
+          "A.9.4.4"
+        ],
+        "soc2": [
+          "CC6.3"
+        ],
+        "mitre": [
+          {
+            "id": "T1558",
+            "name": "Steal or Forge Kerberos Tickets"
+          },
+          {
+            "id": "T1134",
+            "name": "Access Token Manipulation"
+          }
+        ]
+      },
+      "threshold_param": "enableUnconstrainedDelegCheck",
+      "binary": true
+    },
+    {
+      "id": "AD-PRIV-006",
+      "category": "privilege",
+      "title": "Constrained delegation to sensitive services",
+      "description": "Account has constrained delegation configured to sensitive services (LDAP, CIFS, HOST on DCs). May allow privilege escalation.",
+      "severity": "medium",
+      "ldap_filter": "(&(objectClass=user)(msDS-AllowedToDelegateTo=*))",
+      "ldap_attributes": [
+        "sAMAccountName",
+        "msDS-AllowedToDelegateTo",
+        "userAccountControl"
+      ],
+      "remediation": "Review delegation targets. Ensure no delegation to DC services unless operationally required.",
+      "risk_score": 6,
+      "compliance": {
+        "cis_v8": [
+          "5.4"
+        ],
+        "nist_800_53": [
+          "AC-6"
+        ],
+        "iso_27001": [
+          "A.9.2.3"
+        ],
+        "soc2": [
+          "CC6.3"
+        ],
+        "mitre": [
+          {
+            "id": "T1558",
+            "name": "Steal or Forge Kerberos Tickets"
+          }
+        ]
+      },
+      "threshold_param": "enableConstrainedDelegCheck",
+      "binary": true
+    },
+    {
+      "id": "AD-ACCT-001",
+      "category": "account",
+      "title": "Stale account — no logon in 90+ days",
+      "description": "Account has not been used in over 90 days but remains enabled. Dormant accounts are common persistence targets.",
+      "severity": "medium",
+      "ldap_filter": "(&(objectClass=user)(!(userAccountControl:1.2.840.113556.1.4.803:=2))(lastLogonTimestamp<=__90_DAYS_AGO__))",
+      "ldap_attributes": [
+        "sAMAccountName",
+        "lastLogonTimestamp",
+        "department",
+        "manager"
+      ],
+      "remediation": "Disable or delete unused accounts. Implement an account lifecycle review process quarterly.",
+      "risk_score": 5,
+      "threshold_param": "staleAccountDays",
+      "compliance": {
+        "cis_v8": [
+          "5.3"
+        ],
+        "nist_800_53": [
+          "AC-2",
+          "AC-2(3)"
+        ],
+        "iso_27001": [
+          "A.9.2.5",
+          "A.9.2.6"
+        ],
+        "soc2": [
+          "CC6.2"
+        ],
+        "mitre": [
+          {
+            "id": "T1078",
+            "name": "Valid Accounts"
+          }
+        ]
+      },
+      "binary": false
+    },
+    {
+      "id": "AD-ACCT-002",
+      "category": "account",
+      "title": "Account never logged in",
+      "description": "Account was created but has never been used. Orphaned accounts may indicate provisioning errors or ghost accounts.",
+      "severity": "low",
+      "ldap_filter": "(&(objectClass=user)(!(userAccountControl:1.2.840.113556.1.4.803:=2))(!(lastLogonTimestamp=*)))",
+      "ldap_attributes": [
+        "sAMAccountName",
+        "whenCreated",
+        "description",
+        "department"
+      ],
+      "remediation": "Confirm account is legitimate. Disable if not needed within 30 days of creation.",
+      "risk_score": 3.5,
+      "compliance": {
+        "cis_v8": [
+          "5.3"
+        ],
+        "nist_800_53": [
+          "AC-2"
+        ],
+        "iso_27001": [
+          "A.9.2.5"
+        ],
+        "soc2": [
+          "CC6.2"
+        ],
+        "mitre": [
+          {
+            "id": "T1078",
+            "name": "Valid Accounts"
+          }
+        ]
+      },
+      "threshold_param": "neverLoggedInDays",
+      "binary": false
+    },
+    {
+      "id": "AD-ACCT-003",
+      "category": "account",
+      "title": "Disabled account still in privileged group",
+      "description": "A disabled user account is still a member of a privileged group. If re-enabled, it immediately gains elevated access.",
+      "severity": "medium",
+      "ldap_filter": "(&(objectClass=user)(userAccountControl:1.2.840.113556.1.4.803:=2)(memberOf=CN=Domain Admins,CN=Users,__DC__))",
+      "ldap_attributes": [
+        "sAMAccountName",
+        "userAccountControl",
+        "memberOf"
+      ],
+      "remediation": "Remove disabled accounts from all privileged groups.",
+      "risk_score": 5.5,
+      "compliance": {
+        "cis_v8": [
+          "5.3",
+          "5.4"
+        ],
+        "nist_800_53": [
+          "AC-2",
+          "AC-2(3)"
+        ],
+        "iso_27001": [
+          "A.9.2.5",
+          "A.9.2.3"
+        ],
+        "soc2": [
+          "CC6.2",
+          "CC6.3"
+        ],
+        "mitre": [
+          {
+            "id": "T1078",
+            "name": "Valid Accounts"
+          }
+        ]
+      },
+      "threshold_param": "enableDisabledPrivGroupCheck",
+      "binary": true
+    },
+    {
+      "id": "AD-ACCT-004",
+      "category": "account",
+      "title": "Shared / generic account detected",
+      "description": "Account name matches patterns indicative of shared accounts (admin, test, temp, shared, service, backup, helpdesk). Shared accounts prevent individual accountability.",
+      "severity": "medium",
+      "ldap_filter": "(&(objectClass=user)(!(userAccountControl:1.2.840.113556.1.4.803:=2))(|(cn=*admin*)(cn=*test*)(cn=*temp*)(cn=*shared*)(cn=*backup*)(cn=*helpdesk*)))",
+      "ldap_attributes": [
+        "sAMAccountName",
+        "description",
+        "memberOf",
+        "lastLogonTimestamp"
+      ],
+      "remediation": "Replace shared accounts with individual accounts. Use service accounts with minimal privileges for automated processes.",
+      "risk_score": 5,
+      "compliance": {
+        "cis_v8": [
+          "5.1",
+          "5.6"
+        ],
+        "nist_800_53": [
+          "AC-2",
+          "IA-2"
+        ],
+        "iso_27001": [
+          "A.9.2.1",
+          "A.9.2.3"
+        ],
+        "soc2": [
+          "CC6.2"
+        ],
+        "mitre": [
+          {
+            "id": "T1078",
+            "name": "Valid Accounts"
+          },
+          {
+            "id": "T1136",
+            "name": "Create Account"
+          }
+        ]
+      },
+      "threshold_param": "enableSharedAccountCheck",
+      "binary": true
+    },
+    {
+      "id": "AD-ACCT-005",
+      "category": "account",
+      "title": "Account with SID History",
+      "description": "Account has a populated SIDHistory attribute. This can be exploited for privilege escalation if it contains high-privilege SIDs.",
+      "severity": "high",
+      "ldap_filter": "(&(objectClass=user)(sIDHistory=*))",
+      "ldap_attributes": [
+        "sAMAccountName",
+        "sIDHistory",
+        "memberOf"
+      ],
+      "remediation": "Audit SIDHistory entries. Clear unnecessary entries after domain migration is complete.",
+      "risk_score": 7.5,
+      "compliance": {
+        "cis_v8": [
+          "5.4"
+        ],
+        "nist_800_53": [
+          "AC-6",
+          "AC-2"
+        ],
+        "iso_27001": [
+          "A.9.2.3"
+        ],
+        "soc2": [
+          "CC6.3"
+        ],
+        "mitre": [
+          {
+            "id": "T1134.005",
+            "name": "SID-History Injection"
+          }
+        ]
+      },
+      "threshold_param": "enableSidHistoryCheck",
+      "binary": true
+    },
+    {
+      "id": "AD-GPO-001",
+      "category": "gpo",
+      "title": "Default Domain Policy — weak password minimum length",
+      "description": "The Default Domain Policy enforces a password minimum length below the recommended threshold of 12 characters.",
+      "severity": "high",
+      "gpo_setting": "Computer Configuration\\Policies\\Windows Settings\\Security Settings\\Account Policies\\Password Policy\\Minimum password length",
+      "ldap_source": "msDS-MinimumPasswordLength on domain object",
+      "ldap_filter": "(&(objectClass=domainDNS)(!(msDS-MinimumPasswordLength>=12)))",
+      "ldap_attributes": [
+        "msDS-MinimumPasswordLength",
+        "msDS-PasswordComplexityEnabled"
+      ],
+      "remediation": "Set minimum password length to 14+ in Default Domain Policy.",
+      "risk_score": 7,
+      "compliance": {
+        "cis_v8": [
+          "5.2"
+        ],
+        "nist_800_53": [
+          "IA-5(1)"
+        ],
+        "iso_27001": [
+          "A.9.4.3"
+        ],
+        "soc2": [
+          "CC6.1"
+        ],
+        "mitre": [
+          {
+            "id": "T1110",
+            "name": "Brute Force"
+          }
+        ]
+      },
+      "threshold_param": "minPasswordLength",
+      "binary": false
+    },
+    {
+      "id": "AD-GPO-002",
+      "category": "gpo",
+      "title": "Account lockout not configured",
+      "description": "Account lockout threshold is 0 (disabled), allowing unlimited brute-force attempts against domain accounts.",
+      "severity": "critical",
+      "gpo_setting": "Account Policies\\Account Lockout Policy\\Account lockout threshold",
+      "ldap_source": "lockoutThreshold on domain object",
+      "ldap_filter": "(&(objectClass=domainDNS)(lockoutThreshold=0))",
+      "ldap_attributes": [
+        "lockoutThreshold",
+        "lockoutDuration",
+        "lockoutObservationWindow"
+      ],
+      "remediation": "Configure lockout threshold to 5 or fewer attempts with 15-minute observation window.",
+      "risk_score": 9,
+      "compliance": {
+        "cis_v8": [
+          "5.2"
+        ],
+        "nist_800_53": [
+          "AC-7"
+        ],
+        "iso_27001": [
+          "A.9.4.3"
+        ],
+        "soc2": [
+          "CC6.1"
+        ],
+        "mitre": [
+          {
+            "id": "T1110",
+            "name": "Brute Force"
+          },
+          {
+            "id": "T1110.003",
+            "name": "Password Spraying"
+          }
+        ]
+      },
+      "threshold_param": "lockoutThreshold",
+      "binary": false
+    },
+    {
+      "id": "AD-GPO-003",
+      "category": "gpo",
+      "title": "Password complexity not enforced",
+      "description": "Domain-level password complexity requirement is disabled. Accounts can be created with simple, easily guessable passwords.",
+      "severity": "high",
+      "gpo_setting": "Account Policies\\Password Policy\\Password must meet complexity requirements",
+      "ldap_source": "msDS-PasswordComplexityEnabled on domain object",
+      "ldap_filter": "(&(objectClass=domainDNS)(!(msDS-PasswordComplexityEnabled=TRUE)))",
+      "ldap_attributes": [
+        "msDS-PasswordComplexityEnabled"
+      ],
+      "remediation": "Enable password complexity via Default Domain Policy.",
+      "risk_score": 7.5,
+      "compliance": {
+        "cis_v8": [
+          "5.2"
+        ],
+        "nist_800_53": [
+          "IA-5(1)"
+        ],
+        "iso_27001": [
+          "A.9.4.3"
+        ],
+        "soc2": [
+          "CC6.1"
+        ],
+        "mitre": [
+          {
+            "id": "T1110",
+            "name": "Brute Force"
+          }
+        ]
+      },
+      "threshold_param": "enableComplexityCheck",
+      "binary": true
+    },
+    {
+      "id": "AD-GPO-004",
+      "category": "gpo",
+      "title": "LAPS not deployed",
+      "description": "Local Administrator Password Solution (LAPS) is not configured. All machines may share the same local admin password, enabling lateral movement.",
+      "severity": "high",
+      "gpo_setting": "LAPS (ms-Mcs-AdmPwd attribute presence on computer objects)",
+      "ldap_filter": "(&(objectClass=computer)(!(ms-Mcs-AdmPwd=*)))",
+      "ldap_attributes": [
+        "cn",
+        "operatingSystem",
+        "ms-Mcs-AdmPwd",
+        "ms-Mcs-AdmPwdExpirationTime"
+      ],
+      "remediation": "Deploy LAPS or Windows LAPS (built-in since Windows Server 2019/Windows 11). Configure via GPO.",
+      "risk_score": 8,
+      "compliance": {
+        "cis_v8": [
+          "5.4",
+          "4.2"
+        ],
+        "nist_800_53": [
+          "IA-5",
+          "CM-6"
+        ],
+        "iso_27001": [
+          "A.9.4.3",
+          "A.12.6.1"
+        ],
+        "soc2": [
+          "CC6.1"
+        ],
+        "mitre": [
+          {
+            "id": "T1110",
+            "name": "Brute Force"
+          },
+          {
+            "id": "T1570",
+            "name": "Lateral Tool Transfer"
+          }
+        ]
+      },
+      "threshold_param": "enableLapsCheck",
+      "binary": true
+    },
+    {
+      "id": "AD-GPO-005",
+      "category": "gpo",
+      "title": "Reversible encryption enabled at domain level",
+      "description": "Domain-level policy allows storage of passwords using reversible encryption.",
+      "severity": "critical",
+      "gpo_setting": "Account Policies\\Password Policy\\Store passwords using reversible encryption",
+      "ldap_filter": "(&(objectClass=domainDNS)(msDS-PasswordReversibleEncryptionEnabled=TRUE))",
+      "ldap_attributes": [
+        "msDS-PasswordReversibleEncryptionEnabled"
+      ],
+      "remediation": "Disable immediately and force password resets for all affected accounts.",
+      "risk_score": 9.5,
+      "compliance": {
+        "cis_v8": [
+          "3.11",
+          "5.2"
+        ],
+        "nist_800_53": [
+          "IA-5",
+          "SC-28"
+        ],
+        "iso_27001": [
+          "A.10.1.1"
+        ],
+        "soc2": [
+          "CC6.1",
+          "CC6.7"
+        ],
+        "mitre": [
+          {
+            "id": "T1003",
+            "name": "OS Credential Dumping"
+          }
+        ]
+      },
+      "threshold_param": "enableDomainReversibleEncCheck",
+      "binary": true
+    },
+    {
+      "id": "AD-GPO-006",
+      "category": "gpo",
+      "title": "Kerberos ticket lifetime exceeds recommended value",
+      "description": "Maximum Kerberos ticket lifetime exceeds 10 hours or maximum renewable lifetime exceeds 7 days. Long-lived tickets extend attacker access window.",
+      "severity": "medium",
+      "gpo_setting": "Account Policies\\Kerberos Policy\\Maximum lifetime for user ticket",
+      "ldap_filter": "(&(objectClass=domainDNS))",
+      "ldap_attributes": [
+        "maxTicketAge",
+        "maxRenewAge",
+        "maxServiceAge",
+        "maxClockSkew"
+      ],
+      "remediation": "Set max ticket lifetime to 10h and max renewable to 7 days in Default Domain Policy.",
+      "risk_score": 5,
+      "compliance": {
+        "cis_v8": [
+          "4.7"
+        ],
+        "nist_800_53": [
+          "AC-12",
+          "IA-3"
+        ],
+        "iso_27001": [
+          "A.9.4.2"
+        ],
+        "soc2": [
+          "CC6.1"
+        ],
+        "mitre": [
+          {
+            "id": "T1558",
+            "name": "Steal or Forge Kerberos Tickets"
+          },
+          {
+            "id": "T1550.003",
+            "name": "Pass the Ticket"
+          }
+        ]
+      },
+      "threshold_param": "kerbTicketMaxHours",
+      "binary": false
+    },
+    {
+      "id": "AD-GPO-007",
+      "category": "gpo",
+      "title": "Audit policy — insufficient logon event logging",
+      "description": "Success and/or failure auditing for Logon/Logoff events is not enabled at domain level. Authentication events are undetectable.",
+      "severity": "high",
+      "gpo_setting": "Advanced Audit Policy Configuration\\Logon/Logoff\\Audit Logon",
+      "ldap_note": "Requires SYSVOL read. Partially detectable via auditingPolicy attribute on domain object.",
+      "ldap_filter": "(&(objectClass=domainDNS))",
+      "ldap_attributes": [
+        "auditingPolicy"
+      ],
+      "remediation": "Enable 'Audit Logon Events' (success+failure) via Advanced Audit Policy Configuration GPO.",
+      "risk_score": 7,
+      "compliance": {
+        "cis_v8": [
+          "8.2",
+          "8.5"
+        ],
+        "nist_800_53": [
+          "AU-2",
+          "AU-12"
+        ],
+        "iso_27001": [
+          "A.12.4.1"
+        ],
+        "soc2": [
+          "CC7.2"
+        ],
+        "mitre": [
+          {
+            "id": "T1562.002",
+            "name": "Disable Windows Event Logging"
+          }
+        ]
+      },
+      "threshold_param": "enableAuditPolicyCheck",
+      "binary": true
+    },
+    {
+      "id": "AD-GPO-008",
+      "category": "gpo",
+      "title": "Protected Users group not utilised",
+      "description": "The Protected Users security group is empty or contains fewer members than Domain Admins. Privileged accounts should be in Protected Users to prevent credential theft.",
+      "severity": "medium",
+      "gpo_setting": "N/A — AD security group",
+      "ldap_filter": "(&(objectClass=group)(cn=Protected Users))",
+      "ldap_attributes": [
+        "member",
+        "distinguishedName"
+      ],
+      "remediation": "Add all tier-0 admin accounts to the Protected Users group. This prevents NTLM auth, DES/RC4 Kerberos, and unconstrained delegation for those accounts.",
+      "risk_score": 6,
+      "compliance": {
+        "cis_v8": [
+          "5.4",
+          "6.8"
+        ],
+        "nist_800_53": [
+          "AC-6",
+          "IA-2"
+        ],
+        "iso_27001": [
+          "A.9.2.3"
+        ],
+        "soc2": [
+          "CC6.3"
+        ],
+        "mitre": [
+          {
+            "id": "T1003",
+            "name": "OS Credential Dumping"
+          },
+          {
+            "id": "T1558",
+            "name": "Steal or Forge Kerberos Tickets"
+          }
+        ]
+      },
+      "threshold_param": "enableProtectedUsersCheck",
+      "binary": true
+    },
+    {
+      "id": "AD-GPO-009",
+      "category": "gpo",
+      "title": "Fine-Grained Password Policy not in use",
+      "description": "No Password Settings Objects (PSO) found. All accounts share the same weak domain-level password policy with no higher requirements for privileged accounts.",
+      "severity": "medium",
+      "ldap_filter": "(objectClass=msDS-PasswordSettings)",
+      "ldap_attributes": [
+        "cn",
+        "msDS-PasswordSettingsPrecedence",
+        "msDS-MinimumPasswordLength",
+        "msDS-PasswordComplexityEnabled",
+        "msDS-AppliesTo"
+      ],
+      "remediation": "Create PSOs with stricter requirements for Domain Admins and other privileged groups.",
+      "risk_score": 5.5,
+      "compliance": {
+        "cis_v8": [
+          "5.2"
+        ],
+        "nist_800_53": [
+          "IA-5",
+          "IA-5(1)"
+        ],
+        "iso_27001": [
+          "A.9.4.3"
+        ],
+        "soc2": [
+          "CC6.1"
+        ],
+        "mitre": [
+          {
+            "id": "T1110",
+            "name": "Brute Force"
+          }
+        ]
+      },
+      "threshold_param": "enableFGPPCheck",
+      "binary": true
+    },
+    {
+      "id": "AD-GPO-010",
+      "category": "gpo",
+      "title": "Password history too short",
+      "description": "Domain password history is set below 10. Users can cycle back to previous passwords quickly.",
+      "severity": "medium",
+      "gpo_setting": "Account Policies\\Password Policy\\Enforce password history",
+      "ldap_filter": "(&(objectClass=domainDNS)(!(msDS-PasswordHistoryLength>=10)))",
+      "ldap_attributes": [
+        "msDS-PasswordHistoryLength"
+      ],
+      "remediation": "Set password history to 24 in Default Domain Policy.",
+      "risk_score": 4.5,
+      "compliance": {
+        "cis_v8": [
+          "5.2"
+        ],
+        "nist_800_53": [
+          "IA-5(1)"
+        ],
+        "iso_27001": [
+          "A.9.4.3"
+        ],
+        "soc2": [
+          "CC6.1"
+        ],
+        "mitre": [
+          {
+            "id": "T1110",
+            "name": "Brute Force"
+          }
+        ]
+      },
+      "threshold_param": "passwordHistoryCount",
+      "binary": false
+    },
+    {
+      "id": "AD-TRUST-001",
+      "category": "trust",
+      "title": "External or forest trust with SID filtering disabled",
+      "description": "Domain trust exists without SID filtering (quarantine). Attackers with Domain Admin in the trusted domain can inject SIDs to gain privileges here.",
+      "severity": "critical",
+      "ldap_filter": "(&(objectClass=trustedDomain)(!(trustAttributes:1.2.840.113556.1.4.803:=64)))",
+      "ldap_attributes": [
+        "cn",
+        "trustAttributes",
+        "trustDirection",
+        "trustType",
+        "flatName"
+      ],
+      "remediation": "Enable SID filtering on all external trusts: netdom trust /domain:<trusted> /quarantine:yes",
+      "risk_score": 9,
+      "compliance": {
+        "cis_v8": [
+          "12.2"
+        ],
+        "nist_800_53": [
+          "AC-4",
+          "SC-7"
+        ],
+        "iso_27001": [
+          "A.13.1.3"
+        ],
+        "soc2": [
+          "CC6.6"
+        ],
+        "mitre": [
+          {
+            "id": "T1134.005",
+            "name": "SID-History Injection"
+          },
+          {
+            "id": "T1482",
+            "name": "Domain Trust Discovery"
+          }
+        ]
+      },
+      "threshold_param": "enableSidFilteringCheck",
+      "binary": true
+    },
+    {
+      "id": "AD-TRUST-002",
+      "category": "trust",
+      "title": "Bidirectional trust with external domain",
+      "description": "A bidirectional trust grants mutual authentication. If the partner domain is less secure, it becomes an attack vector into your environment.",
+      "severity": "medium",
+      "ldap_filter": "(&(objectClass=trustedDomain)(trustDirection=3))",
+      "ldap_attributes": [
+        "cn",
+        "trustDirection",
+        "trustType",
+        "trustAttributes",
+        "flatName"
+      ],
+      "remediation": "Review if bidirectional trust is operationally required. Convert to one-way if possible.",
+      "risk_score": 6,
+      "compliance": {
+        "cis_v8": [
+          "12.2"
+        ],
+        "nist_800_53": [
+          "AC-4"
+        ],
+        "iso_27001": [
+          "A.13.1.3"
+        ],
+        "soc2": [
+          "CC6.6"
+        ],
+        "mitre": [
+          {
+            "id": "T1482",
+            "name": "Domain Trust Discovery"
+          }
+        ]
+      },
+      "threshold_param": "enableBiDirTrustCheck",
+      "binary": true
+    },
+    {
+      "id": "AD-DC-001",
+      "category": "infrastructure",
+      "title": "Domain Controller with outdated OS",
+      "description": "One or more Domain Controllers are running Windows Server 2012 or older — past end of extended support.",
+      "severity": "critical",
+      "ldap_filter": "(&(objectClass=computer)(userAccountControl:1.2.840.113556.1.4.803:=8192)(|(operatingSystem=*2008*)(operatingSystem=*2003*)(operatingSystem=*2012*)))",
+      "ldap_attributes": [
+        "cn",
+        "operatingSystem",
+        "operatingSystemVersion",
+        "dNSHostName"
+      ],
+      "remediation": "Upgrade to Windows Server 2022. Plan upgrade path via Server 2019 if needed.",
+      "risk_score": 9,
+      "compliance": {
+        "cis_v8": [
+          "2.2"
+        ],
+        "nist_800_53": [
+          "SI-2",
+          "CM-6"
+        ],
+        "iso_27001": [
+          "A.12.6.1"
+        ],
+        "soc2": [
+          "CC7.1"
+        ],
+        "mitre": [
+          {
+            "id": "T1190",
+            "name": "Exploit Public-Facing Application"
+          }
+        ]
+      },
+      "threshold_param": "enableOutdatedOsCheck",
+      "binary": true
+    },
+    {
+      "id": "AD-DC-002",
+      "category": "infrastructure",
+      "title": "krbtgt password not rotated in 180+ days",
+      "description": "The krbtgt account password has not been changed recently. Stale krbtgt enables Golden Ticket attacks if the hash is ever compromised.",
+      "severity": "high",
+      "ldap_filter": "(&(objectClass=user)(sAMAccountName=krbtgt))",
+      "ldap_attributes": [
+        "sAMAccountName",
+        "pwdLastSet",
+        "whenChanged"
+      ],
+      "remediation": "Rotate krbtgt password twice (to invalidate all existing tickets). Use Microsoft's krbtgt rotation script.",
+      "risk_score": 8.5,
+      "compliance": {
+        "cis_v8": [
+          "5.2"
+        ],
+        "nist_800_53": [
+          "IA-5"
+        ],
+        "iso_27001": [
+          "A.9.4.3"
+        ],
+        "soc2": [
+          "CC6.1"
+        ],
+        "mitre": [
+          {
+            "id": "T1558.001",
+            "name": "Golden Ticket"
+          }
+        ]
+      },
+      "threshold_param": "krbtgtRotationDays",
+      "binary": false
+    },
+    {
+      "id": "AD-DC-003",
+      "category": "infrastructure",
+      "title": "No Read-Only Domain Controller deployed",
+      "description": "No RODC found in the domain. Branch offices or DMZ environments without RODC expose full writable DC credentials to higher-risk networks.",
+      "severity": "low",
+      "ldap_filter": "(&(objectClass=computer)(primaryGroupID=521))",
+      "ldap_attributes": [
+        "cn",
+        "dNSHostName",
+        "site"
+      ],
+      "remediation": "Deploy RODCs in branch offices and DMZ locations to limit credential exposure.",
+      "risk_score": 3,
+      "compliance": {
+        "cis_v8": [
+          "12.2"
+        ],
+        "nist_800_53": [
+          "SC-7",
+          "AC-4"
+        ],
+        "iso_27001": [
+          "A.13.1.3"
+        ],
+        "soc2": [
+          "CC6.6"
+        ],
+        "mitre": [
+          {
+            "id": "T1003.006",
+            "name": "DCSync"
+          }
+        ]
+      },
+      "threshold_param": "enableRodcCheck",
+      "binary": true
+    }
+  ]
+}

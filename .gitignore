@@ -1,0 +1,19 @@
+# env files
+.env
+.env.*
+!.env.example
+
+# node
+node_modules
+npm-debug.log
+
+# docker
+*.log
+*.pid
+
+# build
+dist
+build
+
+# system
+.DS_Store

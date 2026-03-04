@@ -1,0 +1,35 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="theme-color" content="#0a0e1a" />
+    <meta name="description" content="ADSentinel Enterprise — Multi-Tenant AD Auditing Portal" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=DM+Sans:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+    <title>ADSentinel Enterprise</title>
+    <style>
+      *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+      html, body, #root { height: 100%; }
+      body {
+        background: #0a0e1a;
+        color: #e2e8f0;
+        font-family: 'DM Sans', 'Segoe UI', sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      /* Initial loading state before React mounts */
+      #root:empty::after {
+        content: '';
+        display: block;
+        position: fixed;
+        inset: 0;
+        background: #0a0e1a;
+      }
+    </style>
+  </head>
+  <body>
+    <noscript>ADSentinel requires JavaScript to be enabled.</noscript>
+    <div id="root"></div>
+  </body>
+</html>

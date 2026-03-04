@@ -1,0 +1,29 @@
+{
+  "name": "adsentinel-frontend",
+  "version": "2.0.0",
+  "private": true,
+  "dependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.20.0",
+    "react-scripts": "5.0.1",
+    "jspdf": "^2.5.1",
+    "jspdf-autotable": "^3.7.1",
+    "papaparse": "^5.4.1",
+    "file-saver": "^2.0.5",
+    "web-vitals": "^3.5.0",
+    "ajv": "^8.12.0"
+  },
+  "scripts": {
+    "start": "react-scripts start",
+    "build": "DISABLE_ESLINT_PLUGIN=true react-scripts build",
+    "test": "react-scripts test"
+  },
+  "resolutions": {
+    "ajv": "^8.12.0"
+  },
+  "browserslist": {
+    "production": [">0.2%", "not dead"],
+    "development": ["last 1 chrome version"]
+  }
+}
