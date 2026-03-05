@@ -395,6 +395,10 @@ router.get("/overview", authenticate, async (req, res) => {
         "SELECT email, is_enabled FROM ad_users WHERE customer_id=$1",
         [c.id]
       );
+      const { rows: sync } = await query(
+        "SELECT MAX(fetched_at) AS last_synced FROM hr_employees WHERE customer_id=$1",
+        [c.id]
+      );
 
       const terminated = hr.filter(e => isTerminated(e.status));
       const adEnabledEmails = new Set(ad.filter(u => u.is_enabled && u.email).map(u => u.email.toLowerCase()));
@@ -406,7 +410,7 @@ router.get("/overview", authenticate, async (req, res) => {
         hr_total:      hr.length,
         hr_terminated: terminated.length,
         ad_users:      ad.length,
-        last_synced:   null, // would need to query max fetched_at
+        last_synced:   sync[0]?.last_synced || null,
       };
     }));
 

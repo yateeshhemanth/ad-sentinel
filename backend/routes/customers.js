@@ -43,6 +43,7 @@ const customerValidators = [
     return /^https?:\/\//i.test(value);
   }),
   body("hr_status_token").optional({ nullable: true }).isString().isLength({ min: 0, max: 2048 }),
+  body("allow_self_signed").optional({ nullable: true }).isBoolean(),
 ];
 
 const requiredCreateValidators = [
@@ -73,6 +74,9 @@ function normalizeCustomerPayload(body = {}) {
     bind_dn: body.bind_dn?.trim() || null,
     hr_status_url: body.hr_status_url?.trim() || null,
     hr_status_token: body.hr_status_token?.trim() || null,
+    allow_self_signed: body.allow_self_signed !== undefined
+      ? body.allow_self_signed === true || body.allow_self_signed === "true"
+      : undefined,
   };
 
   const rawPassword = body.bind_password_enc !== undefined
@@ -108,6 +112,7 @@ router.get("/template", authenticate, requireRole("admin", "engineer"), (req, re
       { key: "bind_password", required: false, writeOnly: true },
       { key: "hr_status_url", required: false, example: "https://hr.example.com/api/status" },
       { key: "hr_status_token", required: false, writeOnly: true },
+      { key: "allow_self_signed", required: false, type: "boolean", default: false },
     ],
   });
 });
@@ -120,8 +125,8 @@ router.post("/", authenticate, requireRole("admin", "engineer"), [...customerVal
     const payload = normalizeCustomerPayload(req.body);
 
     const { rows } = await query(
-      `INSERT INTO customers (name, domain, dc_ip, ldap_port, bind_dn, bind_password_enc, hr_status_url, hr_status_token)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      `INSERT INTO customers (name, domain, dc_ip, ldap_port, bind_dn, bind_password_enc, hr_status_url, hr_status_token, allow_self_signed)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
       [
         payload.name,
         payload.domain,
@@ -131,6 +136,7 @@ router.post("/", authenticate, requireRole("admin", "engineer"), [...customerVal
         payload.bind_password_enc || null,
         payload.hr_status_url,
         payload.hr_status_token,
+        payload.allow_self_signed ?? false,
       ]
     );
 
@@ -175,8 +181,9 @@ router.post(
                 SET name=$1, dc_ip=$2, ldap_port=$3, bind_dn=$4,
                     bind_password_enc=COALESCE($5, bind_password_enc),
                     hr_status_url=$6, hr_status_token=$7,
+                    allow_self_signed=$8,
                     is_active=true
-              WHERE id=$8
+              WHERE id=$9
             RETURNING *`,
             [
               payload.name,
@@ -186,14 +193,15 @@ router.post(
               payload.bind_password_enc,
               payload.hr_status_url,
               payload.hr_status_token,
+              payload.allow_self_signed ?? false,
               existing[0].id,
             ]
           );
           updated.push(toSafeCustomer(rows[0]));
         } else {
           const { rows } = await query(
-            `INSERT INTO customers (name, domain, dc_ip, ldap_port, bind_dn, bind_password_enc, hr_status_url, hr_status_token)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+            `INSERT INTO customers (name, domain, dc_ip, ldap_port, bind_dn, bind_password_enc, hr_status_url, hr_status_token, allow_self_signed)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
              RETURNING *`,
             [
               payload.name,
@@ -204,6 +212,7 @@ router.post(
               payload.bind_password_enc || null,
               payload.hr_status_url,
               payload.hr_status_token,
+              payload.allow_self_signed ?? false,
             ]
           );
           created.push(toSafeCustomer(rows[0]));
@@ -241,6 +250,7 @@ router.patch("/:id", authenticate, requireRole("admin", "engineer"), [...idValid
     set("bind_password_enc", payload.bind_password_enc);
     set("hr_status_url", payload.hr_status_url);
     set("hr_status_token", payload.hr_status_token);
+    set("allow_self_signed", payload.allow_self_signed);
 
     if (!fields.length) return res.status(400).json({ error: "No fields to update" });
 

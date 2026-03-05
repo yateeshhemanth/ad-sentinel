@@ -7,8 +7,8 @@ const morgan     = require("morgan");
 const path       = require("path");
 
 const logger        = require("./config/logger");
-const { connectDB } = require("./config/db");
-const { connectRedis } = require("./config/redis");
+const { connectDB, query } = require("./config/db");
+const { connectRedis, getClient } = require("./config/redis");
 
 // ── Routes ──────────────────────────────────────────────────────────
 const authRoutes      = require("./routes/auth");
@@ -88,6 +88,19 @@ app.use("/report-files", express.static(REPORTS_DIR_STATIC));
 // ── Health check ─────────────────────────────────────────────────────
 app.get("/api/health", (req, res) => {
   res.json({ status: "ok", timestamp: new Date().toISOString(), version: "2.0.0" });
+});
+
+
+app.get("/api/health/ready", async (req, res) => {
+  try {
+    await query("SELECT 1");
+    const redis = getClient();
+    if (!redis) return res.status(503).json({ status: "degraded", reason: "Redis client not initialized" });
+    await redis.ping();
+    res.json({ status: "ready", timestamp: new Date().toISOString() });
+  } catch (err) {
+    res.status(503).json({ status: "not_ready", error: err.message });
+  }
 });
 
 // ── API routes ────────────────────────────────────────────────────────

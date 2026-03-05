@@ -36,6 +36,12 @@ const upload = async (path, formData) => {
     headers: { Authorization: `Bearer ${getToken()}` },
     body: formData,
   });
+  if (res.status === 401) {
+    localStorage.removeItem("ads_token");
+    localStorage.removeItem("ads_user");
+    window.location.href = "/login";
+    throw new Error("Unauthorized");
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || "Upload failed");
   return data;

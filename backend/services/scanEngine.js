@@ -382,7 +382,9 @@ async function runScan(customerId) {
   try {
     const { rows: s } = await query("SELECT value FROM app_settings WHERE key = 'audit_params'");
     if (s.length) auditParams = JSON.parse(s[0].value);
-  } catch {}
+  } catch (err) {
+    logger.warn("Invalid audit_params JSON; using defaults. " + err.message);
+  }
 
   const port   = parseInt(customer.ldap_port) || 389;
   const useTLS = port === 636 || port === 3269;

@@ -29,6 +29,13 @@ nano .env.dev
 nano .env.prod
 ```
 
+Required production env settings:
+- `APP_ENV=production`
+- `FRONTEND_URL=https://<your-frontend-host>`
+- `CORS_ALLOWED_ORIGINS=https://<your-frontend-host>[,https://<dr-host>]`
+- `FIELD_ENCRYPTION_KEY` must remain stable across restarts/migrations (used to decrypt AD bind passwords).
+
+
 ### 3. Start
 
 ```bash
@@ -101,7 +108,8 @@ curl -s -X POST http://localhost:8080/api/customers   -H "Authorization: Bearer 
     "bind_dn":"CN=svc_ldap,OU=Service Accounts,DC=corp,DC=example,DC=com",
     "bind_password":"super-secret",
     "hr_status_url":"https://hr.example.com/api/status",
-    "hr_status_token":"hr-token"
+    "hr_status_token":"hr-token",
+    "allow_self_signed": false
   }'
 ```
 
