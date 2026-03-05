@@ -83,6 +83,7 @@ const initSchema = async () => {
         hr_status_url    TEXT,
         hr_status_token  TEXT,
         allow_self_signed BOOLEAN DEFAULT false,
+        audit_params     TEXT,
         created_at       TIMESTAMPTZ DEFAULT NOW()
       );
 
@@ -226,6 +227,9 @@ const initSchema = async () => {
         END IF;
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='customers' AND column_name='allow_self_signed') THEN
           ALTER TABLE customers ADD COLUMN allow_self_signed BOOLEAN DEFAULT false;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='customers' AND column_name='audit_params') THEN
+          ALTER TABLE customers ADD COLUMN audit_params TEXT;
         END IF;
       END $$;
     `).catch(e => logger.warn("Migration warning: " + e.message));

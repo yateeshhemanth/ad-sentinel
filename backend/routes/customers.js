@@ -44,6 +44,7 @@ const customerValidators = [
   }),
   body("hr_status_token").optional({ nullable: true }).isString().isLength({ min: 0, max: 2048 }),
   body("allow_self_signed").optional({ nullable: true }).isBoolean(),
+  body("audit_params").optional({ nullable: true }).custom((v)=>{ if(v===null||v===undefined||v==="") return true; try{JSON.parse(typeof v === "string" ? v : JSON.stringify(v)); return true;}catch{return false;} }),
 ];
 
 const requiredCreateValidators = [
@@ -76,6 +77,9 @@ function normalizeCustomerPayload(body = {}) {
     hr_status_token: body.hr_status_token?.trim() || null,
     allow_self_signed: body.allow_self_signed !== undefined
       ? body.allow_self_signed === true || body.allow_self_signed === "true"
+      : undefined,
+    audit_params: body.audit_params !== undefined
+      ? (body.audit_params === null || body.audit_params === "" ? null : JSON.stringify(typeof body.audit_params === "string" ? JSON.parse(body.audit_params) : body.audit_params))
       : undefined,
   };
 
@@ -113,6 +117,7 @@ router.get("/template", authenticate, requireRole("admin", "engineer"), (req, re
       { key: "hr_status_url", required: false, example: "https://hr.example.com/api/status" },
       { key: "hr_status_token", required: false, writeOnly: true },
       { key: "allow_self_signed", required: false, type: "boolean", default: false },
+      { key: "audit_params", required: false, type: "json", note: "Per-customer AD parameters / exceptions" },
     ],
   });
 });
@@ -125,8 +130,8 @@ router.post("/", authenticate, requireRole("admin", "engineer"), [...customerVal
     const payload = normalizeCustomerPayload(req.body);
 
     const { rows } = await query(
-      `INSERT INTO customers (name, domain, dc_ip, ldap_port, bind_dn, bind_password_enc, hr_status_url, hr_status_token, allow_self_signed)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      `INSERT INTO customers (name, domain, dc_ip, ldap_port, bind_dn, bind_password_enc, hr_status_url, hr_status_token, allow_self_signed, audit_params)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING *`,
       [
         payload.name,
         payload.domain,
@@ -137,6 +142,7 @@ router.post("/", authenticate, requireRole("admin", "engineer"), [...customerVal
         payload.hr_status_url,
         payload.hr_status_token,
         payload.allow_self_signed ?? false,
+        payload.audit_params || null,
       ]
     );
 
@@ -182,8 +188,9 @@ router.post(
                     bind_password_enc=COALESCE($5, bind_password_enc),
                     hr_status_url=$6, hr_status_token=$7,
                     allow_self_signed=$8,
+                    audit_params=$9,
                     is_active=true
-              WHERE id=$9
+              WHERE id=$10
             RETURNING *`,
             [
               payload.name,
@@ -194,14 +201,15 @@ router.post(
               payload.hr_status_url,
               payload.hr_status_token,
               payload.allow_self_signed ?? false,
+              payload.audit_params,
               existing[0].id,
             ]
           );
           updated.push(toSafeCustomer(rows[0]));
         } else {
           const { rows } = await query(
-            `INSERT INTO customers (name, domain, dc_ip, ldap_port, bind_dn, bind_password_enc, hr_status_url, hr_status_token, allow_self_signed)
-             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+            `INSERT INTO customers (name, domain, dc_ip, ldap_port, bind_dn, bind_password_enc, hr_status_url, hr_status_token, allow_self_signed, audit_params)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
              RETURNING *`,
             [
               payload.name,
@@ -213,6 +221,7 @@ router.post(
               payload.hr_status_url,
               payload.hr_status_token,
               payload.allow_self_signed ?? false,
+              payload.audit_params || null,
             ]
           );
           created.push(toSafeCustomer(rows[0]));
@@ -251,6 +260,7 @@ router.patch("/:id", authenticate, requireRole("admin", "engineer"), [...idValid
     set("hr_status_url", payload.hr_status_url);
     set("hr_status_token", payload.hr_status_token);
     set("allow_self_signed", payload.allow_self_signed);
+    set("audit_params", payload.audit_params);
 
     if (!fields.length) return res.status(400).json({ error: "No fields to update" });
 

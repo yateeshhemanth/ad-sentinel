@@ -65,6 +65,27 @@ const DEFAULT_BRANDING = {
   primary_color:   "#0ea5e9",
 };
 
+const BASE_PARAM_VALUES = Object.fromEntries(PARAM_DEFINITIONS.map(p => [p.key, p.default]));
+const CATEGORY_SUGGESTIONS = [
+  "Password", "Account", "Privilege", "GPO", "Trust", "Infrastructure", "Scan", "Custom",
+  "Domain Controllers", "Replication", "FSMO", "DNS", "Authentication", "Sysvol", "Sites & Links",
+];
+
+function parseAuditParams(raw) {
+  try {
+    if (!raw) return null;
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (!parsed || typeof parsed !== "object") return null;
+    return {
+      standard: { ...BASE_PARAM_VALUES, ...(parsed.standard || {}) },
+      custom: Array.isArray(parsed.custom) ? parsed.custom : [],
+      exceptions: Array.isArray(parsed.exceptions) ? parsed.exceptions : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
 export default function ConnectionManager({ logoUrl, refreshLogo, refreshBranding }) {
   const { user } = useAuth();
   const isAdmin  = user?.role === "admin";
@@ -72,8 +93,11 @@ export default function ConnectionManager({ logoUrl, refreshLogo, refreshBrandin
   const [activeTab,    setActiveTab]    = useState("connections");
   const [conns,        setConns]        = useState([]);
   const [portalUsers,  setPortalUsers]  = useState([]);
-  const [paramValues,  setParamValues]  = useState(Object.fromEntries(PARAM_DEFINITIONS.map(p=>[p.key,p.default])));
+  const [paramValues,  setParamValues]  = useState(BASE_PARAM_VALUES);
   const [customParams, setCustomParams] = useState([]);
+  const [paramScope, setParamScope] = useState("global");
+  const [globalAuditState, setGlobalAuditState] = useState(null);
+  const [exceptionText, setExceptionText] = useState("");
   const [notifications,setNotifications]= useState(DEFAULT_NOTIFICATIONS);
   const [branding,     setBranding]     = useState(DEFAULT_BRANDING);
   const [connLoad,     setConnLoad]     = useState(true);
@@ -108,8 +132,12 @@ export default function ConnectionManager({ logoUrl, refreshLogo, refreshBrandin
       if (s.audit_params) {
         try {
           const p = JSON.parse(s.audit_params);
-          if (p.standard) setParamValues(x => ({ ...x, ...p.standard }));
-          if (p.custom)   setCustomParams(p.custom);
+          const nextStandard = p.standard ? { ...BASE_PARAM_VALUES, ...p.standard } : BASE_PARAM_VALUES;
+          const nextCustom = p.custom || [];
+          setParamValues(nextStandard);
+          setCustomParams(nextCustom);
+          setExceptionText((p.exceptions || []).join("\n"));
+          setGlobalAuditState({ standard: nextStandard, custom: nextCustom, exceptions: p.exceptions || [] });
         } catch {}
       }
       // Notifications
@@ -132,6 +160,22 @@ export default function ConnectionManager({ logoUrl, refreshLogo, refreshBrandin
       }));
     }).catch(() => {});
   }, [isAdmin]);
+
+  useEffect(() => {
+    if (paramScope === "global") {
+      const globalCfg = globalAuditState || { standard: BASE_PARAM_VALUES, custom: [], exceptions: [] };
+      setParamValues(globalCfg.standard || BASE_PARAM_VALUES);
+      setCustomParams(globalCfg.custom || []);
+      setExceptionText((globalCfg.exceptions || []).join("\n"));
+      return;
+    }
+
+    const customer = conns.find(c => c.id === paramScope);
+    const scopedCfg = parseAuditParams(customer?.audit_params) || { standard: BASE_PARAM_VALUES, custom: [], exceptions: [] };
+    setParamValues(scopedCfg.standard || BASE_PARAM_VALUES);
+    setCustomParams(scopedCfg.custom || []);
+    setExceptionText((scopedCfg.exceptions || []).join("\n"));
+  }, [paramScope, conns, globalAuditState]);
 
   const cf = k => e => setConnForm(p => ({ ...p, [k]: e.target.value }));
   const uf = k => e => setUserForm(p => ({ ...p, [k]: e.target.value }));
@@ -241,7 +285,21 @@ export default function ConnectionManager({ logoUrl, refreshLogo, refreshBrandin
   const saveParams = async () => {
     setSaving(true);
     try {
-      await settingsApi.save({ audit_params: JSON.stringify({ standard:paramValues, custom:customParams }) });
+      const payload = {
+        standard: paramValues,
+        custom: customParams,
+        exceptions: exceptionText.split(/\\r?\\n/).map(x => x.trim()).filter(Boolean),
+      };
+
+      if (paramScope === "global") {
+        await settingsApi.save({ audit_params: JSON.stringify(payload) });
+        setGlobalAuditState(payload);
+      } else {
+        const updated = await customersApi.update(paramScope, { audit_params: payload });
+        setConns(list => list.map(c => c.id === updated.id ? updated : c));
+        setParamScope(updated.id);
+      }
+
       showSaved("✅ Audit parameters saved");
     } catch (err) { alert(err.message); }
     setSaving(false);
@@ -408,8 +466,16 @@ export default function ConnectionManager({ logoUrl, refreshLogo, refreshBrandin
             <div>
               <div style={{ fontSize:13, fontWeight:700 }}>Audit Parameters</div>
               <div style={{ fontSize:11, color:T.colors.muted, marginTop:4 }}>
-                Global thresholds applied to all scans. Every parameter maps 1:1 to a finding in the library.
+                Configure global or per-customer AD parameters. Every parameter maps 1:1 to a finding in the library.
                 {!isAdmin && <span style={{ color:T.colors.warn }}> · Read-only (admin only)</span>}
+              </div>
+              <div style={{ marginTop:10, display:"flex", gap:8, alignItems:"center" }}>
+                <span style={{ fontSize:11, color:T.colors.muted }}>Scope:</span>
+                <select value={paramScope} onChange={e => setParamScope(e.target.value)}
+                  style={{ background:T.colors.surface, border:`1px solid ${T.colors.border}`, borderRadius:6, color:T.colors.text, padding:"6px 10px", fontSize:12 }}>
+                  <option value="global">Global (all customers)</option>
+                  {conns.map(c => <option key={c.id} value={c.id}>{c.name} ({c.domain})</option>)}
+                </select>
               </div>
             </div>
             <div style={{ display:"flex", gap:10, alignItems:"center" }}>
@@ -457,6 +523,20 @@ export default function ConnectionManager({ logoUrl, refreshLogo, refreshBrandin
               </div>
             );
           })}
+
+          <div style={{ background:T.colors.card, border:`1px solid ${T.colors.border}`, borderRadius:8, padding:14, maxWidth:700 }}>
+            <div style={{ fontSize:12, fontWeight:700, marginBottom:6 }}>Exception Accounts</div>
+            <div style={{ fontSize:11, color:T.colors.muted, marginBottom:8 }}>
+              One account/computer name per line. These will be excluded from findings and reports for the selected scope.
+            </div>
+            <textarea
+              value={exceptionText}
+              disabled={!isAdmin}
+              onChange={e => setExceptionText(e.target.value)}
+              placeholder={"svc_backup\nsvc_sql\nDC01$"}
+              style={{ width:"100%", minHeight:100, background:T.colors.surface, color:T.colors.text, border:`1px solid ${T.colors.border}`, borderRadius:6, padding:10, fontFamily:T.fonts.mono, fontSize:11 }}
+            />
+          </div>
         </div>
       )}
 
@@ -815,10 +895,11 @@ export default function ConnectionManager({ logoUrl, refreshLogo, refreshBrandin
             </div>
             <div>
               <label style={{ fontSize:11, fontWeight:700, color:T.colors.muted, display:"block", marginBottom:6 }}>CATEGORY</label>
-              <select value={newParam.category} onChange={e=>setNewParam(p=>({...p,category:e.target.value}))}
-                style={{ width:"100%", background:T.colors.surface, border:`1px solid ${T.colors.border}`, borderRadius:6, color:T.colors.text, padding:"9px 12px", fontSize:13 }}>
-                {["Password","Account","Privilege","GPO","Trust","Infrastructure","Scan","Custom"].map(c=><option key={c}>{c}</option>)}
-              </select>
+              <input value={newParam.category} list="param-category-options" onChange={e=>setNewParam(p=>({...p,category:e.target.value}))}
+                style={{ width:"100%", background:T.colors.surface, border:`1px solid ${T.colors.border}`, borderRadius:6, color:T.colors.text, padding:"9px 12px", fontSize:13 }} />
+              <datalist id="param-category-options">
+                {[...new Set([...CATEGORY_SUGGESTIONS, ...PARAM_DEFINITIONS.map(p => p.category)])].map(c => <option key={c} value={c} />)}
+              </datalist>
             </div>
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>

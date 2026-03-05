@@ -272,6 +272,25 @@ async function storeUserDirectory(customerId, customerName, users) {
   return stored;
 }
 
+
+function normalizeAuditParams(globalParams, customer) {
+  let local = {};
+  try {
+    if (customer?.audit_params) {
+      local = typeof customer.audit_params === "string" ? JSON.parse(customer.audit_params) : customer.audit_params;
+    }
+  } catch (err) {
+    logger.warn("Invalid customer audit_params JSON; ignoring overrides for " + customer.name + ": " + err.message);
+  }
+  return { ...(globalParams || {}), ...(local?.standard || {}), ...(local || {}) };
+}
+
+function getExclusionSet(auditParams) {
+  const list = auditParams?.exceptions || auditParams?.excluded_accounts || [];
+  const arr = Array.isArray(list) ? list : [];
+  return new Set(arr.map(x => String(x || "").toLowerCase()).filter(Boolean));
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // Run all 31 finding checks
 // ─────────────────────────────────────────────────────────────────────
@@ -346,7 +365,7 @@ async function storeInventorySnapshot(customerId, customerName, inventory) {
 // ─────────────────────────────────────────────────────────────────────
 // Run all 31 finding checks
 // ─────────────────────────────────────────────────────────────────────
-async function runFindingChecks(client, dcDN, auditParams) {
+async function runFindingChecks(client, dcDN, auditParams, exclusionSet = new Set()) {
   const lib     = getLibrary();
   const results = [];
 
@@ -373,15 +392,19 @@ async function runFindingChecks(client, dcDN, auditParams) {
       if (entries.length === 0) continue;
 
       // Extract affected account names
-      const affectedUsers = entries
+      const rawAffectedUsers = entries
         .map(e => {
           if (e.sAMAccountName) return e.sAMAccountName;
           if (e.cn) return e.cn;
           if (e.distinguishedName) return e.distinguishedName.split(",")[0].replace("CN=","");
           return null;
         })
-        .filter(Boolean)
+        .filter(Boolean);
+
+      const affectedUsers = rawAffectedUsers
+        .filter(u => !exclusionSet.has(String(u).toLowerCase()))
         .slice(0, 50);
+      const effectiveCount = rawAffectedUsers.filter(u => !exclusionSet.has(String(u).toLowerCase())).length || entries.length;
 
       results.push({
         finding_id:         finding.id,
@@ -390,7 +413,7 @@ async function runFindingChecks(client, dcDN, auditParams) {
         severity:           finding.severity,
         risk_score:         finding.risk_score,
         category:           finding.category,
-        affected_count:     entries.length,
+        affected_count:     effectiveCount,
         affected_users:     affectedUsers,
         remediation:        finding.remediation || "Review AD policy baseline and enforce least privilege.",
         compliance:         finding.compliance,
@@ -449,14 +472,16 @@ async function runScan(customerId) {
     };
   }
 
-  // Load audit params
-  let auditParams = {};
+  // Load global + customer-specific audit params
+  let globalAuditParams = {};
   try {
     const { rows: s } = await query("SELECT value FROM app_settings WHERE key = 'audit_params'");
-    if (s.length) auditParams = JSON.parse(s[0].value);
+    if (s.length) globalAuditParams = JSON.parse(s[0].value);
   } catch (err) {
     logger.warn("Invalid audit_params JSON; using defaults. " + err.message);
   }
+  const auditParams = normalizeAuditParams(globalAuditParams, customer);
+  const exclusionSet = getExclusionSet(auditParams);
 
   const port   = parseInt(customer.ldap_port) || 389;
   const useTLS = port === 636 || port === 3269;
@@ -490,6 +515,11 @@ async function runScan(customerId) {
     try {
       const adUsers = await collectUserDirectory(client, dcDN);
       userCount = await storeUserDirectory(customerId, customer.name, adUsers);
+      const seen = adUsers.map(u => u.sam_account_name).filter(Boolean);
+      await query(
+        `DELETE FROM ad_users WHERE customer_id = $1 AND sam_account_name <> ALL($2::text[])`,
+        [customerId, seen.length ? seen : ["__none__"]]
+      );
       logger.info("User directory: " + userCount + " accounts stored");
     } catch (err) {
       logger.warn("User directory error: " + err.message);
@@ -507,7 +537,7 @@ async function runScan(customerId) {
 
     // 3. Run finding checks
     logger.info("Running " + getLibrary().findings.length + " finding checks…");
-    const findings = await runFindingChecks(client, dcDN, auditParams);
+    const findings = await runFindingChecks(client, dcDN, auditParams, exclusionSet);
 
     // 4. Write alerts
     let created = 0, skipped = 0;
@@ -517,7 +547,32 @@ async function runScan(customerId) {
         "SELECT id FROM alerts WHERE customer_id=$1 AND details->>'finding_id'=$2 AND is_acked=false",
         [customerId, f.finding_id]
       );
-      if (existing.length) { skipped++; continue; }
+
+      if (existing.length) {
+        await query(
+          "UPDATE alerts SET message=$1, severity=$2, details=$3, created_at=NOW() WHERE id=$4",
+          [
+            "[" + f.finding_id + "] " + f.title + " — " + f.affected_count + " account(s) affected",
+            f.severity,
+            JSON.stringify({
+              finding_id:         f.finding_id,
+              category:           f.category,
+              description:        f.description,
+              remediation:        f.remediation,
+              risk_score:         f.risk_score,
+              affected_count:     f.affected_count,
+              affected_users:     f.affected_users,
+              compliance:         f.compliance,
+              compliance_summary: f.compliance_summary,
+              scan_type:          "ldap",
+              scanned_at:         new Date().toISOString(),
+            }),
+            existing[0].id,
+          ]
+        );
+        skipped++;
+        continue;
+      }
 
       await query(
         "INSERT INTO alerts (customer_id, customer_name, message, severity, details) VALUES ($1,$2,$3,$4,$5)",
