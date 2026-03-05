@@ -168,6 +168,31 @@ router.get("/customer-stats/:customerId", authenticate, async (req, res) => {
 });
 
 // ── Fetch real data from DB ────────────────────────────────────────
+function filterFindingsForType(type, findings) {
+  const id = (f) => String(f.finding_id || "").toUpperCase();
+  const cat = (f) => String(f.category || "").toLowerCase();
+  const title = (f) => String(f.title || "").toLowerCase();
+
+  switch (type) {
+    case "password_vulnerability":
+      return findings.filter(f => id(f).startsWith("AD-PWD-") || cat(f) === "password");
+    case "stale_accounts":
+      return findings.filter(f => id(f).startsWith("AD-ACCT-") || /stale|inactive|never log/.test(title(f)) || cat(f) === "account");
+    case "policy_compliance":
+      return findings.filter(f => id(f).startsWith("AD-GPO-") || cat(f) === "gpo" || /policy/.test(title(f)));
+    case "privileged_accounts":
+      return findings.filter(f => id(f).startsWith("AD-PRIV-") || cat(f) === "privilege");
+    case "compliance_mapping":
+      return findings.filter(f => !!String(f.compliance || "").trim());
+    case "kerberos_risks":
+      return findings.filter(f => /kerberos|kerberoast|as-rep|ticket/.test(title(f)) || /KERB/.test(id(f)) || title(f).includes("as-rep"));
+    case "trust_analysis":
+      return findings.filter(f => id(f).startsWith("AD-TRUST-") || cat(f) === "trust");
+    default:
+      return findings;
+  }
+}
+
 async function fetchReportData(type, customerId, customerName) {
   let customer = null;
   if (customerId) {
@@ -180,13 +205,7 @@ async function fetchReportData(type, customerId, customerName) {
     : "SELECT * FROM alerts ORDER BY created_at DESC LIMIT 1000";
   const { rows: alerts } = await query(alertQ, customerId ? [customerId] : []);
 
-  const critical = alerts.filter(a => a.severity === "critical").length;
-  const high     = alerts.filter(a => a.severity === "high").length;
-  const medium   = alerts.filter(a => a.severity === "medium").length;
-  const low      = alerts.filter(a => a.severity === "low").length;
-  const score    = Math.max(0, Math.min(100, 100 - critical*15 - high*5 - medium*2));
-
-  const findings = alerts
+  const allFindings = alerts
     .filter(a => a.details?.finding_id)
     .map(a => ({
       finding_id:  a.details.finding_id,
@@ -205,6 +224,14 @@ async function fetchReportData(type, customerId, customerName) {
       soc2:        (a.details.compliance?.soc2        || []).join(", "),
     }));
 
+  const findings = filterFindingsForType(type, allFindings);
+
+  const critical = findings.filter(a => a.severity === "critical").length;
+  const high     = findings.filter(a => a.severity === "high").length;
+  const medium   = findings.filter(a => a.severity === "medium").length;
+  const low      = findings.filter(a => a.severity === "low").length;
+  const score    = Math.max(0, Math.min(100, 100 - critical*15 - high*5 - medium*2));
+
   const byCategory = findings.reduce((acc, f) => {
     acc[f.category] = (acc[f.category] || 0) + 1;
     return acc;
@@ -215,7 +242,7 @@ async function fetchReportData(type, customerId, customerName) {
     customerName: customer?.name || customerName || "All Customers",
     domain:       customer?.domain || "—",
     generatedAt:  new Date().toISOString(),
-    summary:      { totalAlerts: alerts.length, critical, high, medium, low, securityScore: score, byCategory },
+    summary:      { totalAlerts: findings.length, critical, high, medium, low, securityScore: score, byCategory },
     findings,
   };
 
@@ -265,6 +292,10 @@ async function fetchReportData(type, customerId, customerName) {
             o.object_key,
             o.attributes->>'dNSHostName' AS dns_host_name,
             o.attributes->>'operatingSystem' AS operating_system,
+            o.attributes->>'ipv4Address' AS ipv4,
+            o.attributes->>'isGlobalCatalog' AS is_gc,
+            o.attributes->>'isReachable' AS is_reachable,
+            o.attributes->>'fsmoRoles' AS fsmo_roles,
             o.distinguished_name,
             o.scanned_at
      FROM latest l
@@ -293,17 +324,45 @@ async function fetchReportData(type, customerId, customerName) {
     count: groupCounts[name] || 0,
   }));
 
+  const replRows = allFindings
+    .filter(f => String(f.category || "").toLowerCase() === "trust")
+    .slice(0, 25)
+    .map((f) => ({
+      server: customer?.name || customerName || "N/A",
+      partner: f.finding_id,
+      last_sync: "N/A",
+      consecutive_failures: f.affected || 0,
+      status: ["critical", "high"].includes(f.severity) ? "Failed" : "Healthy",
+    }));
+
   return {
     ...base,
+    findings: type === "ad_health_dashboard" ? allFindings : findings,
+    summary: type === "ad_health_dashboard"
+      ? {
+          ...base.summary,
+          totalAlerts: allFindings.length,
+          critical: allFindings.filter(a => a.severity === "critical").length,
+          high: allFindings.filter(a => a.severity === "high").length,
+          medium: allFindings.filter(a => a.severity === "medium").length,
+          low: allFindings.filter(a => a.severity === "low").length,
+        }
+      : base.summary,
     health: {
       user_accounts: userStats[0] || {},
       infrastructure: inv[0] || {},
       domain_controllers: domainControllers,
       privileged_groups: privilegedGroups,
+      replication: {
+        healthy_partners: replRows.filter(r => r.status === "Healthy").length,
+        failed_partners: replRows.filter(r => r.status === "Failed").length,
+      },
+      replication_rows: replRows,
+      dns_zones: [{ zone_name: "Unable to retrieve", type: "N/A", dynamic_update: "N/A", status: "Error" }],
       findings_by_prefix: {
-        gpo: findings.filter(f => f.finding_id?.startsWith("AD-GPO-")).length,
-        trust: findings.filter(f => f.finding_id?.startsWith("AD-TRUST-")).length,
-        dc: findings.filter(f => f.finding_id?.startsWith("AD-DC-")).length,
+        gpo: allFindings.filter(f => f.finding_id?.startsWith("AD-GPO-")).length,
+        trust: allFindings.filter(f => f.finding_id?.startsWith("AD-TRUST-")).length,
+        dc: allFindings.filter(f => f.finding_id?.startsWith("AD-DC-")).length,
       },
     },
   };
@@ -321,6 +380,8 @@ async function generateCSV(data, filepath, type) {
     const fx = h.findings_by_prefix || {};
     const dcs = Array.isArray(h.domain_controllers) ? h.domain_controllers : [];
     const pgs = Array.isArray(h.privileged_groups) ? h.privileged_groups : [];
+    const repl = h.replication || {};
+    const dns = Array.isArray(h.dns_zones) ? h.dns_zones : [];
     columns = ["Section", "Metric", "Value"];
     records = [
       ["Scope", "Customer", data.customerName],
@@ -344,10 +405,15 @@ async function generateCSV(data, filepath, type) {
       ["Risk", "High", data.summary?.high || 0],
       ["Risk", "Medium", data.summary?.medium || 0],
       ["Risk", "Low", data.summary?.low || 0],
+      ["Replication", "Healthy Partners", repl.healthy_partners || 0],
+      ["Replication", "Failed Partners", repl.failed_partners || 0],
     ];
     pgs.forEach((g) => records.push(["Privileged Groups", g.name, g.count || 0]));
     dcs.slice(0, 20).forEach((dc, idx) => {
       records.push(["Domain Controllers", `DC ${idx + 1}`, dc.object_key || dc.dns_host_name || "Unknown"]);
+    });
+    dns.slice(0, 10).forEach((z, idx) => {
+      records.push(["DNS Zones", `Zone ${idx + 1}`, `${z.zone_name || "N/A"} (${z.status || "N/A"})`]);
     });
   } else if (type === "compliance_mapping") {
     columns = ["Finding ID","Title","Severity","CIS v8","NIST 800-53","ISO 27001","SOC 2","MITRE ATT&CK"];
@@ -395,6 +461,9 @@ async function generatePDF(data, filepath, type, customerName, user) {
       const fx = health.findings_by_prefix || {};
       const dcs = Array.isArray(health.domain_controllers) ? health.domain_controllers : [];
       const pgs = Array.isArray(health.privileged_groups) ? health.privileged_groups : [];
+      const repl = health.replication || {};
+      const replRows = Array.isArray(health.replication_rows) ? health.replication_rows : [];
+      const dnsZones = Array.isArray(health.dns_zones) ? health.dns_zones : [];
 
       doc.rect(0, 0, doc.page.width, 96).fill(DARK);
       doc.fillColor(BLUE).fontSize(20).font("Helvetica-Bold").text("Active Directory Health Dashboard", 50, 28);
@@ -405,7 +474,7 @@ async function generatePDF(data, filepath, type, customerName, user) {
         ["User Accounts", users.total_users || 0, `${users.enabled_users || 0} enabled / ${users.disabled_users || 0} disabled`],
         ["Domain Controllers", dcs.length, "Latest inventory snapshot"],
         ["Group Policies", infra.total_gpos || 0, `${infra.total_ous || 0} OUs`],
-        ["Security Score", `${s.securityScore}/100`, `${s.critical || 0} critical · ${s.high || 0} high`],
+        ["Replication", repl.healthy_partners || 0, `${repl.failed_partners || 0} failed`],
       ];
       let cx = 50;
       cards.forEach(([title, metric, sub]) => {
@@ -443,6 +512,31 @@ async function generatePDF(data, filepath, type, customerName, user) {
       });
 
       y += 14;
+      doc.fillColor(WHITE).fontSize(12).font("Helvetica-Bold").text("Replication Status", 50, y);
+      y += 14;
+      doc.rect(50, y, 495, 15).fill("#1e3a8a");
+      const replHeaders = ["Server", "Partner", "Last Sync", "Consecutive Failures", "Status"];
+      const replWidths = [84, 214, 80, 76, 41];
+      x = 54;
+      replHeaders.forEach((h, i) => {
+        doc.fillColor(WHITE).fontSize(8).font("Helvetica-Bold").text(h, x, y + 4, { width: replWidths[i] });
+        x += replWidths[i];
+      });
+      y += 17;
+      const replOut = replRows.length ? replRows : [{ server: customerName || "N/A", partner: "N/A", last_sync: "Error", consecutive_failures: "N/A", status: "Error" }];
+      replOut.slice(0, 6).forEach((r, idx) => {
+        if (idx % 2 === 0) doc.rect(50, y, 495, 14).fill("#0b1220");
+        const row = [r.server, r.partner, r.last_sync, String(r.consecutive_failures), r.status];
+        x = 54;
+        row.forEach((v, i) => {
+          const col = i === 4 ? (String(v).toLowerCase() === "failed" || String(v).toLowerCase() === "error" ? RED : GREEN) : WHITE;
+          doc.fillColor(col).fontSize(7).font(i === 4 ? "Helvetica-Bold" : "Helvetica").text(String(v), x, y + 3, { width: replWidths[i], ellipsis: true });
+          x += replWidths[i];
+        });
+        y += 14;
+      });
+
+      y += 14;
       doc.fillColor(WHITE).fontSize(12).font("Helvetica-Bold").text("User Account Summary", 50, y);
       y += 14;
       [
@@ -460,12 +554,43 @@ async function generatePDF(data, filepath, type, customerName, user) {
       });
 
       y += 102;
+      doc.fillColor(WHITE).fontSize(12).font("Helvetica-Bold").text("DNS Zones", 50, y);
+      y += 14;
+      doc.rect(50, y, 495, 15).fill("#1e3a8a");
+      const dnsHeaders = ["Zone Name", "Type", "Dynamic Update", "Status"];
+      const dnsWidths = [180, 70, 160, 80];
+      x = 54;
+      dnsHeaders.forEach((h, i) => {
+        doc.fillColor(WHITE).fontSize(8).font("Helvetica-Bold").text(h, x, y + 4, { width: dnsWidths[i] });
+        x += dnsWidths[i];
+      });
+      y += 17;
+      const dnsOut = dnsZones.length ? dnsZones : [{ zone_name: "Unable to retrieve", type: "N/A", dynamic_update: "N/A", status: "Error" }];
+      dnsOut.slice(0, 4).forEach((z, idx) => {
+        if (idx % 2 === 0) doc.rect(50, y, 495, 14).fill("#0b1220");
+        const row = [z.zone_name, z.type, z.dynamic_update, z.status];
+        x = 54;
+        row.forEach((v, i) => {
+          const col = i === 3 && String(v).toLowerCase() === "error" ? RED : WHITE;
+          doc.fillColor(col).fontSize(7).font("Helvetica").text(String(v), x, y + 3, { width: dnsWidths[i], ellipsis: true });
+          x += dnsWidths[i];
+        });
+        y += 14;
+      });
+
+      y += 14;
       doc.fillColor(WHITE).fontSize(12).font("Helvetica-Bold").text("Privileged Group Coverage", 50, y);
       y += 14;
-      pgs.forEach((g, idx) => {
-        const ry = y + (idx * 12);
-        doc.fillColor(GRAY).fontSize(8).font("Helvetica").text(g.name, 54, ry, { width: 240 });
-        doc.fillColor(BLUE).fontSize(8).font("Helvetica-Bold").text(String(g.count || 0), 200, ry, { width: 40, align: "right" });
+      doc.rect(50, y, 495, 15).fill("#1e3a8a");
+      doc.fillColor(WHITE).fontSize(8).font("Helvetica-Bold").text("Group", 54, y + 4, { width: 340 });
+      doc.fillColor(WHITE).fontSize(8).font("Helvetica-Bold").text("Count", 420, y + 4, { width: 90 });
+      y += 17;
+      const pgOut = pgs.length ? pgs : [{ name: "Domain Admins", count: 0 }];
+      pgOut.slice(0, 6).forEach((g, idx) => {
+        if (idx % 2 === 0) doc.rect(50, y, 495, 14).fill("#0b1220");
+        doc.fillColor(WHITE).fontSize(7).font("Helvetica").text(String(g.name || "N/A"), 54, y + 3, { width: 340, ellipsis: true });
+        doc.fillColor(BLUE).fontSize(7).font("Helvetica-Bold").text(String(g.count || 0), 420, y + 3, { width: 90, align: "right" });
+        y += 14;
       });
 
       doc.addPage();
