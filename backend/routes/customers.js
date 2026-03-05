@@ -1,75 +1,256 @@
 const express = require("express");
-const { query }        = require("../config/db");
+const { body, param, validationResult } = require("express-validator");
+
+const { query } = require("../config/db");
 const { authenticate, requireRole } = require("../middleware/auth");
-const { encrypt, decrypt } = require("../config/crypto");
+const { encrypt } = require("../config/crypto");
+
 const router = express.Router();
 
+const DOMAIN_RE = /^(?=.{3,255}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+
+function validateCustomerEntry(payload) {
+  if (!payload.name || payload.name.length < 2 || payload.name.length > 255) {
+    return "name must be between 2 and 255 characters";
+  }
+  if (!payload.domain || !DOMAIN_RE.test(payload.domain)) {
+    return "domain must be a valid FQDN (e.g. corp.example.com)";
+  }
+  if (payload.ldap_port !== undefined && (!Number.isInteger(payload.ldap_port) || payload.ldap_port < 1 || payload.ldap_port > 65535)) {
+    return "ldap_port must be an integer between 1 and 65535";
+  }
+  if (payload.hr_status_url && !/^https?:\/\//i.test(payload.hr_status_url)) {
+    return "hr_status_url must start with http:// or https://";
+  }
+  return null;
+}
+
+const customerValidators = [
+  body("name").optional().isString().trim().isLength({ min: 2, max: 255 }),
+  body("domain")
+    .optional()
+    .isString()
+    .trim()
+    .toLowerCase()
+    .matches(/^(?=.{3,255}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/),
+  body("dc_ip").optional({ nullable: true }).isString().trim().isLength({ min: 0, max: 255 }),
+  body("ldap_port").optional({ nullable: true }).isInt({ min: 1, max: 65535 }),
+  body("bind_dn").optional({ nullable: true }).isString().trim().isLength({ min: 0, max: 1024 }),
+  body("bind_password").optional({ nullable: true }).isString().isLength({ min: 0, max: 2048 }),
+  body("bind_password_enc").optional({ nullable: true }).isString().isLength({ min: 0, max: 2048 }),
+  body("hr_status_url").optional({ nullable: true }).custom((value) => {
+    if (value === "" || value === null || value === undefined) return true;
+    return /^https?:\/\//i.test(value);
+  }),
+  body("hr_status_token").optional({ nullable: true }).isString().isLength({ min: 0, max: 2048 }),
+  body("allow_self_signed").optional({ nullable: true }).isBoolean(),
+];
+
+const requiredCreateValidators = [
+  body("name").exists().withMessage("name is required"),
+  body("domain").exists().withMessage("domain is required"),
+];
+
+const idValidator = [param("id").isUUID()];
+
+function validateOr400(req, res) {
+  const errors = validationResult(req);
+  if (errors.isEmpty()) return null;
+  res.status(400).json({ errors: errors.array() });
+  return true;
+}
+
+function toSafeCustomer(row) {
+  const { bind_password_enc, ...safe } = row;
+  return safe;
+}
+
+function normalizeCustomerPayload(body = {}) {
+  const normalized = {
+    name: body.name?.trim(),
+    domain: body.domain?.trim().toLowerCase(),
+    dc_ip: body.dc_ip?.trim() || null,
+    ldap_port: body.ldap_port !== undefined ? parseInt(body.ldap_port, 10) : undefined,
+    bind_dn: body.bind_dn?.trim() || null,
+    hr_status_url: body.hr_status_url?.trim() || null,
+    hr_status_token: body.hr_status_token?.trim() || null,
+    allow_self_signed: body.allow_self_signed !== undefined
+      ? body.allow_self_signed === true || body.allow_self_signed === "true"
+      : undefined,
+  };
+
+  const rawPassword = body.bind_password_enc !== undefined
+    ? body.bind_password_enc
+    : body.bind_password;
+  if (rawPassword !== undefined) {
+    normalized.bind_password_enc = rawPassword ? encrypt(rawPassword) : null;
+  }
+
+  return normalized;
+}
+
 // ── GET /api/customers ───────────────────────────────────────────────
-// Never return bind_password_enc to the client
 router.get("/", authenticate, async (req, res) => {
-  const { rows } = await query("SELECT * FROM customers WHERE is_active = true ORDER BY name");
-  res.json(rows.map(({ bind_password_enc, ...safe }) => safe));
-});
-
-// ── POST /api/customers ──────────────────────────────────────────────
-router.post("/", authenticate, requireRole("admin", "engineer"), async (req, res) => {
   try {
-    const {
-      name, domain, dc_ip, ldap_port,
-      bind_dn, bind_password, bind_password_enc,
-      hr_status_url, hr_status_token,
-    } = req.body;
-
-    if (!name || !domain) return res.status(400).json({ error: "name and domain are required" });
-
-    // Encrypt bind password before storing — never keep AD credentials in plaintext
-    const rawPassword    = bind_password_enc || bind_password || null;
-    const storedPassword = rawPassword ? encrypt(rawPassword) : null;
-
-    const { rows } = await query(
-      `INSERT INTO customers (name, domain, dc_ip, ldap_port, bind_dn, bind_password_enc, hr_status_url, hr_status_token)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-      [name, domain, dc_ip || null, parseInt(ldap_port) || 389, bind_dn || null, storedPassword,
-       hr_status_url || null, hr_status_token || null]
-    );
-    // Never expose the encrypted password to the client
-    const { bind_password_enc: _enc, ...safe } = rows[0];
-    res.status(201).json(safe);
+    const { rows } = await query("SELECT * FROM customers WHERE is_active = true ORDER BY name");
+    res.json(rows.map(toSafeCustomer));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ── PATCH /api/customers/:id ─────────────────────────────────────────
-router.patch("/:id", authenticate, requireRole("admin", "engineer"), async (req, res) => {
+// ── GET /api/customers/template ──────────────────────────────────────
+// Gives the frontend/importers a contract for easy domain onboarding.
+router.get("/template", authenticate, requireRole("admin", "engineer"), (req, res) => {
+  res.json({
+    fields: [
+      { key: "name", required: true, example: "HQ Forest" },
+      { key: "domain", required: true, example: "corp.example.com" },
+      { key: "dc_ip", required: false, example: "10.0.10.15" },
+      { key: "ldap_port", required: false, default: 389 },
+      { key: "bind_dn", required: false, example: "CN=svc_ldap,OU=Service Accounts,DC=corp,DC=example,DC=com" },
+      { key: "bind_password", required: false, writeOnly: true },
+      { key: "hr_status_url", required: false, example: "https://hr.example.com/api/status" },
+      { key: "hr_status_token", required: false, writeOnly: true },
+      { key: "allow_self_signed", required: false, type: "boolean", default: false },
+    ],
+  });
+});
+
+// ── POST /api/customers ──────────────────────────────────────────────
+router.post("/", authenticate, requireRole("admin", "engineer"), [...customerValidators, ...requiredCreateValidators], async (req, res) => {
+  if (validateOr400(req, res)) return;
+
   try {
-    const {
-      name, domain, dc_ip, ldap_port,
-      bind_dn, bind_password, bind_password_enc,
-      hr_status_url, hr_status_token,
-    } = req.body;
+    const payload = normalizeCustomerPayload(req.body);
 
-    const fields = [], params = [];
-    const set = (col, val) => {
-      if (val !== undefined) { params.push(val); fields.push(`${col} = $${params.length}`); }
-    };
+    const { rows } = await query(
+      `INSERT INTO customers (name, domain, dc_ip, ldap_port, bind_dn, bind_password_enc, hr_status_url, hr_status_token, allow_self_signed)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [
+        payload.name,
+        payload.domain,
+        payload.dc_ip,
+        payload.ldap_port || 389,
+        payload.bind_dn,
+        payload.bind_password_enc || null,
+        payload.hr_status_url,
+        payload.hr_status_token,
+        payload.allow_self_signed ?? false,
+      ]
+    );
 
-    set("name",             name);
-    set("domain",           domain);
-    set("dc_ip",            dc_ip);
-    set("ldap_port",        ldap_port !== undefined ? parseInt(ldap_port)||389 : undefined);
-    set("bind_dn",          bind_dn);
+    res.status(201).json(toSafeCustomer(rows[0]));
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
-    // Encrypt the incoming password if one was supplied
-    const rawPwd = bind_password_enc !== undefined ? bind_password_enc
-                 : bind_password     !== undefined ? bind_password
-                 : undefined;
-    if (rawPwd !== undefined) {
-      set("bind_password_enc", rawPwd ? encrypt(rawPwd) : null);
+// ── POST /api/customers/bulk ─────────────────────────────────────────
+// Upsert many domain configs in one call to simplify production onboarding.
+router.post(
+  "/bulk",
+  authenticate,
+  requireRole("admin", "engineer"),
+  body("customers").isArray({ min: 1, max: 200 }),
+  async (req, res) => {
+    if (validateOr400(req, res)) return;
+
+    const created = [];
+    const updated = [];
+    const errors = [];
+
+    for (let i = 0; i < req.body.customers.length; i++) {
+      const raw = req.body.customers[i] || {};
+      try {
+        const payload = normalizeCustomerPayload(raw);
+        const entryError = validateCustomerEntry(payload);
+        if (entryError) {
+          errors.push({ index: i, error: entryError });
+          continue;
+        }
+
+        const { rows: existing } = await query(
+          "SELECT id FROM customers WHERE LOWER(domain) = $1 LIMIT 1",
+          [payload.domain]
+        );
+
+        if (existing.length) {
+          const { rows } = await query(
+            `UPDATE customers
+                SET name=$1, dc_ip=$2, ldap_port=$3, bind_dn=$4,
+                    bind_password_enc=COALESCE($5, bind_password_enc),
+                    hr_status_url=$6, hr_status_token=$7,
+                    allow_self_signed=$8,
+                    is_active=true
+              WHERE id=$9
+            RETURNING *`,
+            [
+              payload.name,
+              payload.dc_ip,
+              payload.ldap_port || 389,
+              payload.bind_dn,
+              payload.bind_password_enc,
+              payload.hr_status_url,
+              payload.hr_status_token,
+              payload.allow_self_signed ?? false,
+              existing[0].id,
+            ]
+          );
+          updated.push(toSafeCustomer(rows[0]));
+        } else {
+          const { rows } = await query(
+            `INSERT INTO customers (name, domain, dc_ip, ldap_port, bind_dn, bind_password_enc, hr_status_url, hr_status_token, allow_self_signed)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+             RETURNING *`,
+            [
+              payload.name,
+              payload.domain,
+              payload.dc_ip,
+              payload.ldap_port || 389,
+              payload.bind_dn,
+              payload.bind_password_enc || null,
+              payload.hr_status_url,
+              payload.hr_status_token,
+              payload.allow_self_signed ?? false,
+            ]
+          );
+          created.push(toSafeCustomer(rows[0]));
+        }
+      } catch (err) {
+        errors.push({ index: i, error: err.message });
+      }
     }
 
-    set("hr_status_url",    hr_status_url);
-    set("hr_status_token",  hr_status_token);
+    res.status(errors.length ? 207 : 200).json({ created, updated, errors });
+  }
+);
+
+// ── PATCH /api/customers/:id ─────────────────────────────────────────
+router.patch("/:id", authenticate, requireRole("admin", "engineer"), [...idValidator, ...customerValidators], async (req, res) => {
+  if (validateOr400(req, res)) return;
+
+  try {
+    const payload = normalizeCustomerPayload(req.body);
+
+    const fields = [];
+    const params = [];
+    const set = (col, val) => {
+      if (val !== undefined) {
+        params.push(val);
+        fields.push(`${col} = $${params.length}`);
+      }
+    };
+
+    set("name", payload.name);
+    set("domain", payload.domain);
+    set("dc_ip", payload.dc_ip);
+    set("ldap_port", payload.ldap_port !== undefined ? payload.ldap_port || 389 : undefined);
+    set("bind_dn", payload.bind_dn);
+    set("bind_password_enc", payload.bind_password_enc);
+    set("hr_status_url", payload.hr_status_url);
+    set("hr_status_token", payload.hr_status_token);
+    set("allow_self_signed", payload.allow_self_signed);
 
     if (!fields.length) return res.status(400).json({ error: "No fields to update" });
 
@@ -78,19 +259,25 @@ router.patch("/:id", authenticate, requireRole("admin", "engineer"), async (req,
       `UPDATE customers SET ${fields.join(", ")} WHERE id = $${params.length} RETURNING *`,
       params
     );
+
     if (!rows.length) return res.status(404).json({ error: "Customer not found" });
-    // Never expose the encrypted password to the client
-    const { bind_password_enc: _enc2, ...safe2 } = rows[0];
-    res.json(safe2);
+    res.json(toSafeCustomer(rows[0]));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 // ── DELETE /api/customers/:id ────────────────────────────────────────
-router.delete("/:id", authenticate, requireRole("admin"), async (req, res) => {
-  await query("UPDATE customers SET is_active = false WHERE id = $1", [req.params.id]);
-  res.json({ message: "Customer deactivated" });
+router.delete("/:id", authenticate, requireRole("admin"), idValidator, async (req, res) => {
+  if (validateOr400(req, res)) return;
+
+  try {
+    const result = await query("UPDATE customers SET is_active = false WHERE id = $1", [req.params.id]);
+    if (!result.rowCount) return res.status(404).json({ error: "Customer not found" });
+    res.json({ message: "Customer deactivated" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ── GET /api/customers/platform-posture ─────────────────────────────
@@ -171,7 +358,9 @@ router.get("/platform-posture", authenticate, async (req, res) => {
 });
 
 // ── GET /api/customers/:id/posture ───────────────────────────────────
-router.get("/:id/posture", authenticate, async (req, res) => {
+router.get("/:id/posture", authenticate, idValidator, async (req, res) => {
+  if (validateOr400(req, res)) return;
+
   try {
     const { rows: alerts } = await query(
       "SELECT severity, details FROM alerts WHERE customer_id=$1 AND is_acked=false",
