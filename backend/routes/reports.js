@@ -465,10 +465,12 @@ async function generatePDF(data, filepath, type, customerName, user) {
       const replRows = Array.isArray(health.replication_rows) ? health.replication_rows : [];
       const dnsZones = Array.isArray(health.dns_zones) ? health.dns_zones : [];
 
-      doc.rect(0, 0, doc.page.width, 96).fill(DARK);
-      doc.fillColor(BLUE).fontSize(20).font("Helvetica-Bold").text("Active Directory Health Dashboard", 50, 28);
-      doc.fillColor(WHITE).fontSize(12).font("Helvetica").text(`${customerName} · ${data.domain}`, 50, 56);
-      doc.fillColor(GRAY).fontSize(9).text(`Generated: ${new Date().toLocaleString()} · By: ${user.name}`, 50, 76);
+      doc.rect(0, 0, doc.page.width, doc.page.height).fill("#eef1f7");
+      doc.rect(0, 0, doc.page.width, 96).fill("#5b6fd6");
+      doc.fillColor("#ffffff").fontSize(20).font("Helvetica-Bold").text("Active Directory Health Dashboard", 50, 28);
+      doc.fillColor("#dbeafe").fontSize(9).font("Helvetica").text(`Domain: ${data.domain || "N/A"}`, 50, 56);
+      doc.fillColor("#dbeafe").fontSize(9).font("Helvetica").text(`Forest: ${String(data.domain || "N/A").split(".").slice(-2).join(".") || "N/A"}`, 50, 69);
+      doc.fillColor("#dbeafe").fontSize(9).font("Helvetica").text(`Generated: ${new Date().toLocaleString()}`, 50, 82);
 
       const cards = [
         ["User Accounts", users.total_users || 0, `${users.enabled_users || 0} enabled / ${users.disabled_users || 0} disabled`],
@@ -478,15 +480,15 @@ async function generatePDF(data, filepath, type, customerName, user) {
       ];
       let cx = 50;
       cards.forEach(([title, metric, sub]) => {
-        doc.roundedRect(cx, 112, 120, 76, 6).fillAndStroke("#0f172a", "#1e293b");
-        doc.fillColor(GRAY).fontSize(8).font("Helvetica-Bold").text(title, cx + 8, 122, { width: 104 });
-        doc.fillColor(BLUE).fontSize(17).font("Helvetica-Bold").text(String(metric), cx + 8, 140, { width: 104 });
-        doc.fillColor(WHITE).fontSize(7).font("Helvetica").text(String(sub), cx + 8, 163, { width: 104 });
+        doc.roundedRect(cx, 112, 120, 76, 4).fillAndStroke("#ffffff", "#cbd5e1");
+        doc.fillColor("#1e3a8a").fontSize(8).font("Helvetica-Bold").text(title, cx + 8, 122, { width: 104 });
+        doc.fillColor("#1d4ed8").fontSize(17).font("Helvetica-Bold").text(String(metric), cx + 8, 140, { width: 104 });
+        doc.fillColor("#334155").fontSize(7).font("Helvetica").text(String(sub), cx + 8, 163, { width: 104 });
         cx += 130;
       });
 
       let y = 210;
-      doc.fillColor(WHITE).fontSize(12).font("Helvetica-Bold").text("Domain Controllers Status", 50, y);
+      doc.fillColor("#0f172a").fontSize(12).font("Helvetica-Bold").text("Domain Controllers Status", 50, y);
       y += 16;
       doc.rect(50, y, 495, 15).fill("#1e3a8a");
       const headers = ["Controller", "Host", "OS", "Site"];
@@ -500,19 +502,19 @@ async function generatePDF(data, filepath, type, customerName, user) {
 
       dcs.slice(0, 14).forEach((dc, idx) => {
         if (y > 680) return;
-        if (idx % 2 === 0) doc.rect(50, y, 495, 14).fill("#0b1220");
+        doc.rect(50, y, 495, 14).fill(idx % 2 === 0 ? "#ffffff" : "#f5f7fb");
         const site = String(dc.distinguished_name || "").match(/CN=Servers,CN=([^,]+)/i)?.[1] || "N/A";
         const row = [dc.object_key || "—", dc.dns_host_name || "—", dc.operating_system || "—", site];
         x = 54;
         row.forEach((v, i) => {
-          doc.fillColor(WHITE).fontSize(7).font("Helvetica").text(String(v), x, y + 3, { width: widths[i], ellipsis: true });
+          doc.fillColor("#0f172a").fontSize(7).font("Helvetica").text(String(v), x, y + 3, { width: widths[i], ellipsis: true });
           x += widths[i];
         });
         y += 14;
       });
 
       y += 14;
-      doc.fillColor(WHITE).fontSize(12).font("Helvetica-Bold").text("Replication Status", 50, y);
+      doc.fillColor("#0f172a").fontSize(12).font("Helvetica-Bold").text("Replication Status", 50, y);
       y += 14;
       doc.rect(50, y, 495, 15).fill("#1e3a8a");
       const replHeaders = ["Server", "Partner", "Last Sync", "Consecutive Failures", "Status"];
@@ -525,11 +527,11 @@ async function generatePDF(data, filepath, type, customerName, user) {
       y += 17;
       const replOut = replRows.length ? replRows : [{ server: customerName || "N/A", partner: "N/A", last_sync: "Error", consecutive_failures: "N/A", status: "Error" }];
       replOut.slice(0, 6).forEach((r, idx) => {
-        if (idx % 2 === 0) doc.rect(50, y, 495, 14).fill("#0b1220");
+        doc.rect(50, y, 495, 14).fill(idx % 2 === 0 ? "#ffffff" : "#f5f7fb");
         const row = [r.server, r.partner, r.last_sync, String(r.consecutive_failures), r.status];
         x = 54;
         row.forEach((v, i) => {
-          const col = i === 4 ? (String(v).toLowerCase() === "failed" || String(v).toLowerCase() === "error" ? RED : GREEN) : WHITE;
+          const col = i === 4 ? (String(v).toLowerCase() === "failed" || String(v).toLowerCase() === "error" ? RED : GREEN) : "#0f172a";
           doc.fillColor(col).fontSize(7).font(i === 4 ? "Helvetica-Bold" : "Helvetica").text(String(v), x, y + 3, { width: replWidths[i], ellipsis: true });
           x += replWidths[i];
         });
@@ -537,7 +539,7 @@ async function generatePDF(data, filepath, type, customerName, user) {
       });
 
       y += 14;
-      doc.fillColor(WHITE).fontSize(12).font("Helvetica-Bold").text("User Account Summary", 50, y);
+      doc.fillColor("#0f172a").fontSize(12).font("Helvetica-Bold").text("User Account Summary", 50, y);
       y += 14;
       [
         ["Password Expired", users.pwd_expired || 0],
@@ -549,12 +551,12 @@ async function generatePDF(data, filepath, type, customerName, user) {
         ["Trust Findings", fx.trust || 0],
       ].forEach(([k, v], idx) => {
         const ry = y + (idx * 13);
-        doc.fillColor(idx % 2 ? GRAY : WHITE).fontSize(8.5).font("Helvetica").text(k, 54, ry, { width: 250 });
+        doc.fillColor(idx % 2 ? "#334155" : "#0f172a").fontSize(8.5).font("Helvetica").text(k, 54, ry, { width: 250 });
         doc.fillColor(BLUE).fontSize(8.5).font("Helvetica-Bold").text(String(v), 330, ry, { width: 80, align: "right" });
       });
 
       y += 102;
-      doc.fillColor(WHITE).fontSize(12).font("Helvetica-Bold").text("DNS Zones", 50, y);
+      doc.fillColor("#0f172a").fontSize(12).font("Helvetica-Bold").text("DNS Zones", 50, y);
       y += 14;
       doc.rect(50, y, 495, 15).fill("#1e3a8a");
       const dnsHeaders = ["Zone Name", "Type", "Dynamic Update", "Status"];
@@ -567,11 +569,11 @@ async function generatePDF(data, filepath, type, customerName, user) {
       y += 17;
       const dnsOut = dnsZones.length ? dnsZones : [{ zone_name: "Unable to retrieve", type: "N/A", dynamic_update: "N/A", status: "Error" }];
       dnsOut.slice(0, 4).forEach((z, idx) => {
-        if (idx % 2 === 0) doc.rect(50, y, 495, 14).fill("#0b1220");
+        doc.rect(50, y, 495, 14).fill(idx % 2 === 0 ? "#ffffff" : "#f5f7fb");
         const row = [z.zone_name, z.type, z.dynamic_update, z.status];
         x = 54;
         row.forEach((v, i) => {
-          const col = i === 3 && String(v).toLowerCase() === "error" ? RED : WHITE;
+          const col = i === 3 && String(v).toLowerCase() === "error" ? RED : "#0f172a";
           doc.fillColor(col).fontSize(7).font("Helvetica").text(String(v), x, y + 3, { width: dnsWidths[i], ellipsis: true });
           x += dnsWidths[i];
         });
@@ -579,7 +581,7 @@ async function generatePDF(data, filepath, type, customerName, user) {
       });
 
       y += 14;
-      doc.fillColor(WHITE).fontSize(12).font("Helvetica-Bold").text("Privileged Group Coverage", 50, y);
+      doc.fillColor("#0f172a").fontSize(12).font("Helvetica-Bold").text("Privileged Group Coverage", 50, y);
       y += 14;
       doc.rect(50, y, 495, 15).fill("#1e3a8a");
       doc.fillColor(WHITE).fontSize(8).font("Helvetica-Bold").text("Group", 54, y + 4, { width: 340 });
@@ -587,37 +589,38 @@ async function generatePDF(data, filepath, type, customerName, user) {
       y += 17;
       const pgOut = pgs.length ? pgs : [{ name: "Domain Admins", count: 0 }];
       pgOut.slice(0, 6).forEach((g, idx) => {
-        if (idx % 2 === 0) doc.rect(50, y, 495, 14).fill("#0b1220");
-        doc.fillColor(WHITE).fontSize(7).font("Helvetica").text(String(g.name || "N/A"), 54, y + 3, { width: 340, ellipsis: true });
+        doc.rect(50, y, 495, 14).fill(idx % 2 === 0 ? "#ffffff" : "#f5f7fb");
+        doc.fillColor("#0f172a").fontSize(7).font("Helvetica").text(String(g.name || "N/A"), 54, y + 3, { width: 340, ellipsis: true });
         doc.fillColor(BLUE).fontSize(7).font("Helvetica-Bold").text(String(g.count || 0), 420, y + 3, { width: 90, align: "right" });
         y += 14;
       });
 
       doc.addPage();
-      doc.rect(0, 0, doc.page.width, 54).fill(DARK);
-      doc.fillColor(BLUE).fontSize(14).font("Helvetica-Bold").text("AD Findings Detail", 50, 18);
-      doc.fillColor(GRAY).fontSize(9).text(`${data.findings.length} finding(s) sorted by severity`, 50, 38);
+      doc.rect(0, 0, doc.page.width, doc.page.height).fill("#eef1f7");
+      doc.rect(0, 0, doc.page.width, 54).fill("#5b6fd6");
+      doc.fillColor("#ffffff").fontSize(14).font("Helvetica-Bold").text("Findings Detail", 50, 18);
+      doc.fillColor("#dbeafe").fontSize(9).text(`${data.findings.length} finding(s) · sorted by severity`, 50, 38);
 
       const HDR = ["ID", "Title", "Severity", "Category", "Affected"];
       const COLW = [80, 230, 80, 80, 50];
       let ty = 68;
-      doc.rect(44, ty - 5, doc.page.width - 88, 19).fill("#0f1629");
+      doc.rect(44, ty - 5, doc.page.width - 88, 19).fill("#5b6fd6");
       x = 50;
       HDR.forEach((h, i) => {
-        doc.fillColor(GRAY).fontSize(8).font("Helvetica-Bold").text(h, x, ty);
+        doc.fillColor("#ffffff").fontSize(8).font("Helvetica-Bold").text(h, x, ty);
         x += COLW[i];
       });
       ty += 20;
 
       const sevOrder = { critical: 0, high: 1, medium: 2, low: 3 };
-      const sevColor = { critical: RED, high: AMBER, medium: BLUE, low: GRAY };
+      const sevColor = { critical: "#b91c1c", high: "#b45309", medium: "#1d4ed8", low: "#475569" };
       const sorted = [...data.findings].sort((a, b) => (sevOrder[a.severity] ?? 9) - (sevOrder[b.severity] ?? 9));
       sorted.forEach((f, idx) => {
         if (ty > 760) { doc.addPage(); ty = 50; }
-        if (idx % 2 === 0) doc.rect(44, ty - 3, doc.page.width - 88, 16).fill("#050810");
+        doc.rect(44, ty - 3, doc.page.width - 88, 16).fill(idx % 2 === 0 ? "#ffffff" : "#f5f7fb");
         x = 50;
         [f.finding_id, f.title, f.severity.toUpperCase(), f.category, String(f.affected)].forEach((val, ci) => {
-          doc.fillColor(ci === 2 ? (sevColor[f.severity] || WHITE) : WHITE)
+          doc.fillColor(ci === 2 ? (sevColor[f.severity] || "#0f172a") : "#0f172a")
             .fontSize(7.4)
             .font(ci === 2 ? "Helvetica-Bold" : "Helvetica")
             .text(String(val), x, ty, { width: COLW[ci] - 4, ellipsis: true });
