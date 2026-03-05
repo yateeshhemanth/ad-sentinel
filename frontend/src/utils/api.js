@@ -21,7 +21,7 @@ const request = async (method, path, body, options = {}) => {
     localStorage.removeItem("ads_token");
     localStorage.removeItem("ads_user");
     window.location.href = "/login";
-    return;
+    throw new Error("Unauthorized");
   }
 
   const data = await res.json().catch(() => ({}));
@@ -64,11 +64,13 @@ export const authApi = {
 };
 
 export const customersApi = {
-  list:    ()         => api.get("/customers"),
-  create:  (body)     => api.post("/customers", body),
-  update:  (id, body) => api.patch(`/customers/${id}`, body),
-  remove:  (id)       => api.delete(`/customers/${id}`),
-  posture: (id)       => api.get(`/customers/${id}/posture`),
+  list:     ()         => api.get("/customers"),
+  template: ()         => api.get("/customers/template"),
+  create:   (body)     => api.post("/customers", body),
+  bulk:     (body)     => api.post("/customers/bulk", body),
+  update:   (id, body) => api.patch(`/customers/${id}`, body),
+  remove:   (id)       => api.delete(`/customers/${id}`),
+  posture:  (id)       => api.get(`/customers/${id}/posture`),
 };
 
 export const alertsApi = {
@@ -110,8 +112,9 @@ export const scanApi = {
 };
 
 export const settingsApi = {
-  get:   ()     => api.get('/settings'),
-  save:  (body) => api.put('/settings', body),
+  get:    ()     => api.get('/settings'),
+  schema: ()     => api.get('/settings/schema'),
+  save:   (body) => api.put('/settings', body),
 };
 
 export const usersApi = {

@@ -52,15 +52,23 @@ app.use(helmet({
   crossOriginEmbedderPolicy: false,  // not needed for this SPA architecture
 }));
 app.use(compression());
+const isProd = process.env.APP_ENV === "production";
+const configuredOrigins = (process.env.CORS_ALLOWED_ORIGINS || process.env.FRONTEND_URL || "http://localhost")
+  .split(",")
+  .map(o => o.trim())
+  .filter(Boolean);
+
 app.use(cors({
   origin: (origin, cb) => {
-    // Allow requests with no origin (curl, Postman) and any localhost port in dev
-    const allowed = process.env.FRONTEND_URL || "http://localhost";
-    if (!origin || origin === allowed || /^http:\/\/localhost(:\d+)?$/.test(origin)) {
-      cb(null, true);
-    } else {
-      cb(new Error(`CORS blocked: ${origin}`));
-    }
+    // Allow requests with no origin (curl, Postman).
+    if (!origin) return cb(null, true);
+
+    if (configuredOrigins.includes(origin)) return cb(null, true);
+
+    // localhost wildcard is dev-only.
+    if (!isProd && /^http:\/\/localhost(:\d+)?$/.test(origin)) return cb(null, true);
+
+    cb(new Error(`CORS blocked: ${origin}`));
   },
   credentials: true,
 }));
@@ -109,9 +117,14 @@ app.use((err, req, res, next) => {
 
 // ── Bootstrap ─────────────────────────────────────────────────────────
 (async () => {
-  await connectDB();
-  await connectRedis();
-  app.listen(PORT, () => {
-    logger.info(`ADSentinel API running on port ${PORT}`);
-  });
+  try {
+    await connectDB();
+    await connectRedis();
+    app.listen(PORT, () => {
+      logger.info(`ADSentinel API running on port ${PORT}`);
+    });
+  } catch (err) {
+    logger.error("Fatal startup error:", err);
+    process.exit(1);
+  }
 })();
