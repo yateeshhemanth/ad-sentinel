@@ -1,5 +1,6 @@
 const express = require("express");
 const ldap    = require("ldapjs");
+const dns     = require("dns").promises;
 const { authenticate, requireRole } = require("../middleware/auth");
 const { runScan, getLibrary, reloadLibrary, getLibraryStats } = require("../services/scanEngine");
 const { decrypt } = require("../config/crypto");
@@ -31,6 +32,38 @@ router.post("/library/reload", authenticate, requireRole("admin"), (req, res) =>
   res.json({ message: `Library reloaded — ${lib.findings.length} findings` });
 });
 
+
+const WEAK_PASSWORDS = new Set([
+  "password", "password123", "admin", "admin123", "welcome", "welcome123",
+  "qwerty", "qwerty123", "letmein", "123456", "12345678", "123456789",
+  "p@ssw0rd", "changeme", "iloveyou", "summer2024", "winter2024",
+]);
+
+function parsePasswordList(body) {
+  if (Array.isArray(body.passwords)) return body.passwords.map(String);
+  if (typeof body.passwords_text === "string") return body.passwords_text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  return [];
+}
+
+// ── POST /api/scan/password-list-scan ─────────────────────────────────
+// Accepts uploaded/password-list text and returns weak/known-vulnerable matches.
+router.post("/password-list-scan", authenticate, requireRole("admin", "engineer"), async (req, res) => {
+  const items = parsePasswordList(req.body || {});
+  if (!items.length) return res.status(400).json({ error: "Provide passwords[] or passwords_text" });
+
+  const matches = items
+    .map(p => p.trim())
+    .filter(Boolean)
+    .filter(p => WEAK_PASSWORDS.has(p.toLowerCase()))
+    .map(p => ({ password: p, source: "known_weak_list" }));
+
+  res.json({
+    total_checked: items.length,
+    matched: matches.length,
+    matches,
+  });
+});
+
 // ── POST /api/scan/test-connection ───────────────────────────────────
 // Real LDAP bind test — actually connects to the DC and attempts a bind.
 // Accepts same fields as the connection form.
@@ -53,6 +86,45 @@ router.post("/test-connection", authenticate, async (req, res) => {
     : undefined;
 
   const steps = [];
+
+  let targets = [{ host: dc_ip, port }];
+  if (req.body.domain) {
+    try {
+      const records = await dns.resolveSrv(`_ldap._tcp.dc._msdcs.${req.body.domain}`);
+      if (records?.length) {
+        const hosts = [...new Set(records.map(r => String(r.name || "").replace(/\.$/, "")).filter(Boolean))];
+        targets = hosts.map(h => ({ host: h, port }));
+        steps.push(`ℹ️  Discovered ${hosts.length} domain controller(s) for ${req.body.domain}`);
+      }
+    } catch (e) {
+      steps.push(`⚠️  DC discovery failed for ${req.body.domain}: ${e.message}. Using provided DC IP only.`);
+    }
+  }
+
+  const results = [];
+  for (const t of targets) {
+    const client = ldap.createClient({
+      url:            `${scheme}://${t.host}:${t.port}`,
+      timeout:        10000,
+      connectTimeout: 8000,
+      reconnect:      false,
+      tlsOptions,
+    });
+
+    try {
+      await new Promise((resolve,reject)=> client.bind(bind_dn || "", password || "", (err)=> err ? reject(err) : resolve()));
+      results.push({ target: `${t.host}:${t.port}`, ok: true });
+      try { client.unbind(() => {}); } catch {}
+    } catch (e) {
+      results.push({ target: `${t.host}:${t.port}`, ok: false, message: e.message });
+      try { client.unbind(() => {}); } catch {}
+    }
+  }
+
+  const failed = results.filter(r => !r.ok);
+  if (failed.length) {
+    return res.json({ ok: false, message: `Connection test failed on ${failed.length}/${results.length} domain controllers`, steps, dc_results: results });
+  }
 
   const client = ldap.createClient({
     url:            `${scheme}://${dc_ip}:${port}`,
