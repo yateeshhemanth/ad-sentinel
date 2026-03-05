@@ -187,3 +187,9 @@ export const offboardingApi = {
   apiContract:    ()           => api.get("/offboarding/api-contract"),
   testUrl:        (body)       => api.post("/offboarding/test-url", body),
 };
+
+
+export const inventoryApi = {
+  snapshots: (params) => api.get("/inventory/snapshots", params),
+  objects:   (params) => api.get("/inventory/objects", params),
+};

@@ -162,6 +162,33 @@ const initSchema = async () => {
         UNIQUE(customer_id, sam_account_name)
       );
 
+      CREATE TABLE IF NOT EXISTS ad_inventory_snapshots (
+        id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        customer_id      UUID REFERENCES customers(id) ON DELETE CASCADE,
+        customer_name    VARCHAR(255),
+        started_at       TIMESTAMPTZ DEFAULT NOW(),
+        users_count      INTEGER DEFAULT 0,
+        groups_count     INTEGER DEFAULT 0,
+        computers_count  INTEGER DEFAULT 0,
+        ous_count        INTEGER DEFAULT 0,
+        gpos_count       INTEGER DEFAULT 0
+      );
+
+      CREATE TABLE IF NOT EXISTS ad_inventory_objects (
+        id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        snapshot_id       UUID REFERENCES ad_inventory_snapshots(id) ON DELETE CASCADE,
+        customer_id       UUID REFERENCES customers(id) ON DELETE CASCADE,
+        customer_name     VARCHAR(255),
+        object_type       VARCHAR(50) NOT NULL,
+        object_key        VARCHAR(512),
+        distinguished_name TEXT,
+        attributes        JSONB,
+        scanned_at        TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_ad_inventory_objects_snapshot ON ad_inventory_objects(snapshot_id);
+      CREATE INDEX IF NOT EXISTS idx_ad_inventory_objects_customer_type ON ad_inventory_objects(customer_id, object_type);
+
       CREATE TABLE IF NOT EXISTS app_settings (
         key              VARCHAR(255) PRIMARY KEY,
         value            TEXT,

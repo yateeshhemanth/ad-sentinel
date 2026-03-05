@@ -23,6 +23,7 @@ const auditLogRoutes  = require("./routes/auditLog");
 const usersRoutes     = require("./routes/users");
 const adUsersRoutes     = require("./routes/adUsers");
 const offboardingRoutes  = require("./routes/offboarding");
+const inventoryRoutes    = require("./routes/inventory");
 
 const app  = express();
 const PORT = process.env.PORT || 4000;
@@ -116,6 +117,7 @@ app.use("/api/audit-log", auditLogRoutes);
 app.use("/api/users",     usersRoutes);
 app.use("/api/ad-users",     adUsersRoutes);
 app.use("/api/offboarding",  offboardingRoutes);
+app.use("/api/inventory",  inventoryRoutes);
 
 // ── 404 handler ───────────────────────────────────────────────────────
 app.use((req, res) => {

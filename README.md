@@ -151,7 +151,39 @@ curl -s -X PUT http://localhost:8080/api/settings   -H "Authorization: Bearer <T
   }'
 ```
 
-### 7) Frontend helper mapping
+### 7) Alert integrations (Slack / Email / Webhook / PagerDuty)
+
+Configure these via `PUT /api/settings` (admin):
+
+```bash
+curl -s -X PUT http://localhost:8080/api/settings \
+  -H "Authorization: Bearer <TOKEN>" \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "alert_email":"security@company.com",
+    "slack_webhook":"https://hooks.slack.com/services/...",
+    "webhook_url":"https://ops.company.com/hooks/adsentinel",
+    "pagerduty_routing_key":"<events-api-v2-routing-key>"
+  }'
+```
+
+When new scan alerts are created, ADSentinel now dispatches notifications to configured channels.
+
+### 8) AD inventory snapshots (historical)
+
+The scanner stores historical inventory for AD object types: `user`, `group`, `computer`, `ou`, `gpo`.
+
+```bash
+# List snapshots
+curl -s "http://localhost:8080/api/inventory/snapshots?customer_id=<CUSTOMER_UUID>" \
+  -H "Authorization: Bearer <TOKEN>"
+
+# List objects (filter by snapshot/type)
+curl -s "http://localhost:8080/api/inventory/objects?snapshot_id=<SNAPSHOT_UUID>&object_type=group" \
+  -H "Authorization: Bearer <TOKEN>"
+```
+
+### 9) Frontend helper mapping
 
 The frontend wrappers for these endpoints are in `frontend/src/utils/api.js`:
 - `authApi.changePassword(...)`
@@ -160,6 +192,8 @@ The frontend wrappers for these endpoints are in `frontend/src/utils/api.js`:
 - `customersApi.bulk(...)`
 - `settingsApi.schema()`
 - `settingsApi.save(...)`
+- `inventoryApi.snapshots(...)`
+- `inventoryApi.objects(...)`
 
 ---
 

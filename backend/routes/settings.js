@@ -13,6 +13,10 @@ const SETTINGS_SCHEMA = {
   logo_url:            { type: "string", max: 500, default: "" },
   alert_email:         { type: "email", default: "" },
   slack_webhook:       { type: "url", default: "" },
+  webhook_url:         { type: "url", default: "" },
+  pagerduty_routing_key:{ type: "string", max: 255, default: "" },
+  notifications:       { type: "json", default: "" },
+  audit_params:        { type: "json", default: "" },
   scan_interval_hours: { type: "int", min: 1, max: 168, default: "6" },
   retention_days:      { type: "int", min: 7, max: 3650, default: "365" },
   default_domain:      { type: "domain", default: "" },
@@ -56,6 +60,11 @@ function validateSetting(key, value) {
   if (schema.type === "color") {
     if (!/^#([A-Fa-f0-9]{6})$/.test(str)) return `${key} must be a 6-digit hex color (e.g. #0ea5e9)`;
     return null;
+  }
+
+  if (schema.type === "json") {
+    if (!str) return null;
+    try { JSON.parse(str); return null; } catch { return `${key} must be valid JSON`; }
   }
 
   if (schema.type === "domain") {

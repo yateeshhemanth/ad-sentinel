@@ -18,6 +18,7 @@ const path           = require("path");
 const { query }      = require("../config/db");
 const { decrypt }    = require("../config/crypto");
 const logger         = require("../config/logger");
+const { notifyNewAlerts } = require("./notificationService");
 
 // ─────────────────────────────────────────────────────────────────────
 // Finding library helpers
@@ -274,6 +275,77 @@ async function storeUserDirectory(customerId, customerName, users) {
 // ─────────────────────────────────────────────────────────────────────
 // Run all 31 finding checks
 // ─────────────────────────────────────────────────────────────────────
+
+
+function mapInventoryEntry(entry, objectType) {
+  const attrs = entry || {};
+  return {
+    object_type: objectType,
+    object_key: attrs.sAMAccountName || attrs.cn || attrs.name || attrs.distinguishedName || null,
+    distinguished_name: attrs.distinguishedName || null,
+    attributes: attrs,
+  };
+}
+
+async function collectInventoryObjects(client, dcDN) {
+  const plans = [
+    { type: "user", filter: "(&(objectClass=user)(!(objectClass=computer)))", attrs: ["sAMAccountName", "distinguishedName", "mail", "whenCreated"] },
+    { type: "group", filter: "(objectClass=group)", attrs: ["cn", "distinguishedName", "groupType", "whenCreated"] },
+    { type: "computer", filter: "(objectClass=computer)", attrs: ["cn", "dNSHostName", "distinguishedName", "operatingSystem", "whenCreated"] },
+    { type: "ou", filter: "(objectClass=organizationalUnit)", attrs: ["ou", "distinguishedName", "whenCreated"] },
+    { type: "gpo", filter: "(objectClass=groupPolicyContainer)", attrs: ["displayName", "name", "distinguishedName", "whenCreated"] },
+  ];
+
+  const out = { user: [], group: [], computer: [], ou: [], gpo: [] };
+  for (const plan of plans) {
+    try {
+      const entries = await searchLdap(client, dcDN, plan.filter, plan.attrs, "sub");
+      out[plan.type] = entries.map(e => mapInventoryEntry(e, plan.type));
+    } catch (err) {
+      logger.warn(`Inventory collection failed for ${plan.type}: ${err.message}`);
+    }
+  }
+  return out;
+}
+
+async function storeInventorySnapshot(customerId, customerName, inventory) {
+  const counts = {
+    users: inventory.user.length,
+    groups: inventory.group.length,
+    computers: inventory.computer.length,
+    ous: inventory.ou.length,
+    gpos: inventory.gpo.length,
+  };
+
+  const { rows } = await query(
+    `INSERT INTO ad_inventory_snapshots
+      (customer_id, customer_name, users_count, groups_count, computers_count, ous_count, gpos_count)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)
+     RETURNING id`,
+    [customerId, customerName, counts.users, counts.groups, counts.computers, counts.ous, counts.gpos]
+  );
+  const snapshotId = rows[0].id;
+
+  const all = [...inventory.user, ...inventory.group, ...inventory.computer, ...inventory.ou, ...inventory.gpo];
+  for (const obj of all) {
+    try {
+      await query(
+        `INSERT INTO ad_inventory_objects
+          (snapshot_id, customer_id, customer_name, object_type, object_key, distinguished_name, attributes, scanned_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())`,
+        [snapshotId, customerId, customerName, obj.object_type, obj.object_key, obj.distinguished_name, JSON.stringify(obj.attributes || {})]
+      );
+    } catch (err) {
+      logger.warn(`Inventory object store failed (${obj.object_type}): ${err.message}`);
+    }
+  }
+
+  return { snapshotId, ...counts };
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Run all 31 finding checks
+// ─────────────────────────────────────────────────────────────────────
 async function runFindingChecks(client, dcDN, auditParams) {
   const lib     = getLibrary();
   const results = [];
@@ -320,7 +392,7 @@ async function runFindingChecks(client, dcDN, auditParams) {
         category:           finding.category,
         affected_count:     entries.length,
         affected_users:     affectedUsers,
-        remediation:        finding.remediation,
+        remediation:        finding.remediation || "Review AD policy baseline and enforce least privilege.",
         compliance:         finding.compliance,
         compliance_summary: buildComplianceSummary(finding.compliance),
       });
@@ -423,12 +495,23 @@ async function runScan(customerId) {
       logger.warn("User directory error: " + err.message);
     }
 
-    // 2. Run finding checks
+    // 2. Collect broader AD object inventory (historical snapshots)
+    let inventorySummary = { snapshotId: null, users: 0, groups: 0, computers: 0, ous: 0, gpos: 0 };
+    try {
+      const inventory = await collectInventoryObjects(client, dcDN);
+      inventorySummary = await storeInventorySnapshot(customerId, customer.name, inventory);
+      logger.info(`Inventory snapshot ${inventorySummary.snapshotId} stored: users=${inventorySummary.users}, groups=${inventorySummary.groups}, computers=${inventorySummary.computers}, ous=${inventorySummary.ous}, gpos=${inventorySummary.gpos}`);
+    } catch (err) {
+      logger.warn("Inventory snapshot failed: " + err.message);
+    }
+
+    // 3. Run finding checks
     logger.info("Running " + getLibrary().findings.length + " finding checks…");
     const findings = await runFindingChecks(client, dcDN, auditParams);
 
-    // 3. Write alerts
+    // 4. Write alerts
     let created = 0, skipped = 0;
+    const createdAlerts = [];
     for (const f of findings) {
       const { rows: existing } = await query(
         "SELECT id FROM alerts WHERE customer_id=$1 AND details->>'finding_id'=$2 AND is_acked=false",
@@ -457,6 +540,12 @@ async function runScan(customerId) {
           }),
         ]
       );
+      createdAlerts.push({
+        finding_id: f.finding_id,
+        title: f.title,
+        severity: f.severity,
+        affected_count: f.affected_count,
+      });
       created++;
     }
 
@@ -467,11 +556,22 @@ async function runScan(customerId) {
       new_alerts:    created,
       existing_open: skipped,
       users_stored:  userCount,
+      inventory: {
+        snapshot_id: inventorySummary.snapshotId,
+        users: inventorySummary.users,
+        groups: inventorySummary.groups,
+        computers: inventorySummary.computers,
+        ous: inventorySummary.ous,
+        gpos: inventorySummary.gpos,
+      },
       customer:      customer.name,
       dc:            customer.dc_ip + ":" + port,
       base_dn:       dcDN,
       status:        "completed",
     };
+
+    await notifyNewAlerts(summary, createdAlerts);
+
     logger.info("Scan complete: " + JSON.stringify(summary));
     return summary;
 

@@ -49,6 +49,10 @@ const DEFAULT_NOTIFICATIONS = {
   alertEmail:      "",
   slackEnabled:    false,
   slackWebhook:    "",
+  webhookEnabled:  false,
+  webhookUrl:      "",
+  pagerDutyEnabled:false,
+  pagerDutyRoutingKey:"",
   notifyCritical:  true,
   notifyHigh:      true,
   notifyMedium:    false,
@@ -112,6 +116,13 @@ export default function ConnectionManager({ logoUrl, refreshLogo, refreshBrandin
       if (s.notifications) {
         try { setNotifications(n => ({ ...n, ...JSON.parse(s.notifications) })); } catch {}
       }
+      setNotifications(n => ({
+        ...n,
+        alertEmail: s.alert_email || n.alertEmail,
+        slackWebhook: s.slack_webhook || n.slackWebhook,
+        webhookUrl: s.webhook_url || n.webhookUrl,
+        pagerDutyRoutingKey: s.pagerduty_routing_key || n.pagerDutyRoutingKey,
+      }));
       // Branding — individual keys from settings
       setBranding(b => ({
         ...b,
@@ -239,7 +250,13 @@ export default function ConnectionManager({ logoUrl, refreshLogo, refreshBrandin
   const saveNotifications = async () => {
     setSaving(true);
     try {
-      await settingsApi.save({ notifications: JSON.stringify(notifications) });
+      await settingsApi.save({
+        notifications: JSON.stringify(notifications),
+        alert_email: notifications.emailEnabled ? notifications.alertEmail : "",
+        slack_webhook: notifications.slackEnabled ? notifications.slackWebhook : "",
+        webhook_url: notifications.webhookEnabled ? notifications.webhookUrl : "",
+        pagerduty_routing_key: notifications.pagerDutyEnabled ? notifications.pagerDutyRoutingKey : "",
+      });
       showSaved("✅ Notification settings saved");
     } catch (err) { alert(err.message); }
     setSaving(false);
@@ -617,6 +634,28 @@ export default function ConnectionManager({ logoUrl, refreshLogo, refreshBrandin
               <Input label="Slack Webhook URL" placeholder="https://hooks.slack.com/services/…"
                 value={notifications.slackWebhook} disabled={!isAdmin}
                 onChange={e=>setNotifications(n=>({...n,slackWebhook:e.target.value}))} />
+            )}
+
+            <div style={{ borderTop:`1px solid ${T.colors.border}`, paddingTop:16, fontSize:12, fontWeight:700 }}>Webhook Notifications</div>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+              <span style={{ fontSize:12 }}>Enable generic webhook</span>
+              <MiniToggle value={notifications.webhookEnabled} disabled={!isAdmin} onChange={v=>setNotifications(n=>({...n,webhookEnabled:v}))} />
+            </div>
+            {notifications.webhookEnabled && (
+              <Input label="Webhook URL" placeholder="https://ops.company.com/hooks/adsentinel"
+                value={notifications.webhookUrl} disabled={!isAdmin}
+                onChange={e=>setNotifications(n=>({...n,webhookUrl:e.target.value}))} />
+            )}
+
+            <div style={{ borderTop:`1px solid ${T.colors.border}`, paddingTop:16, fontSize:12, fontWeight:700 }}>PagerDuty Notifications</div>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+              <span style={{ fontSize:12 }}>Enable PagerDuty Events API v2</span>
+              <MiniToggle value={notifications.pagerDutyEnabled} disabled={!isAdmin} onChange={v=>setNotifications(n=>({...n,pagerDutyEnabled:v}))} />
+            </div>
+            {notifications.pagerDutyEnabled && (
+              <Input label="PagerDuty Routing Key" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                value={notifications.pagerDutyRoutingKey} disabled={!isAdmin}
+                onChange={e=>setNotifications(n=>({...n,pagerDutyRoutingKey:e.target.value}))} />
             )}
 
             <div style={{ borderTop:`1px solid ${T.colors.border}`, paddingTop:16, fontSize:12, fontWeight:700 }}>Alert Thresholds</div>
