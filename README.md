@@ -29,6 +29,13 @@ nano .env.dev
 nano .env.prod
 ```
 
+Required production env settings:
+- `APP_ENV=production`
+- `FRONTEND_URL=https://<your-frontend-host>`
+- `CORS_ALLOWED_ORIGINS=https://<your-frontend-host>[,https://<dr-host>]`
+- `FIELD_ENCRYPTION_KEY` must remain stable across restarts/migrations (used to decrypt AD bind passwords).
+
+
 ### 3. Start
 
 ```bash
@@ -59,6 +66,103 @@ docker compose -f docker-compose.base.yml -f docker-compose.prod.yml --env-file 
 ```
 
 ---
+
+## API Usage Guide (Admin & Automation)
+
+All API routes are under `/api` and (except login/forgot/reset) require a Bearer token.
+
+### 1) Authenticate and capture token
+
+```bash
+curl -s -X POST http://localhost:8080/api/auth/login   -H 'Content-Type: application/json'   -d '{"email":"admin@adsentinel.local","password":"Admin@Dev1234!"}'
+```
+
+Use the returned `token` as:
+
+```bash
+-H "Authorization: Bearer <TOKEN>"
+```
+
+### 2) Change password (authenticated user)
+
+```bash
+curl -s -X POST http://localhost:8080/api/auth/change-password   -H "Authorization: Bearer <TOKEN>"   -H 'Content-Type: application/json'   -d '{"currentPassword":"OldPass123!","newPassword":"NewPass123!"}'
+```
+
+### 3) Customer onboarding template
+
+Fetch required/optional fields before building CSV/import payloads:
+
+```bash
+curl -s http://localhost:8080/api/customers/template   -H "Authorization: Bearer <TOKEN>"
+```
+
+### 4) Create one AD domain/customer
+
+```bash
+curl -s -X POST http://localhost:8080/api/customers   -H "Authorization: Bearer <TOKEN>"   -H 'Content-Type: application/json'   -d '{
+    "name":"HQ Forest",
+    "domain":"corp.example.com",
+    "dc_ip":"10.0.10.15",
+    "ldap_port":389,
+    "bind_dn":"CN=svc_ldap,OU=Service Accounts,DC=corp,DC=example,DC=com",
+    "bind_password":"super-secret",
+    "hr_status_url":"https://hr.example.com/api/status",
+    "hr_status_token":"hr-token",
+    "allow_self_signed": false
+  }'
+```
+
+### 5) Bulk create/update customers
+
+`POST /api/customers/bulk` accepts `{ "customers": [...] }` and upserts by `domain`.
+
+```bash
+curl -s -X POST http://localhost:8080/api/customers/bulk   -H "Authorization: Bearer <TOKEN>"   -H 'Content-Type: application/json'   -d '{
+    "customers":[
+      {"name":"HQ","domain":"corp.example.com","dc_ip":"10.0.10.15","ldap_port":389},
+      {"name":"EU","domain":"eu.example.com","dc_ip":"10.20.0.15","ldap_port":636}
+    ]
+  }'
+```
+
+Response shape:
+- `created`: newly inserted customers
+- `updated`: existing domains updated and re-activated
+- `errors`: per-item failures with original index
+
+### 6) Settings schema + safe update
+
+Get setting contract (types/defaults) before writing values:
+
+```bash
+curl -s http://localhost:8080/api/settings/schema   -H "Authorization: Bearer <TOKEN>"
+```
+
+Save validated settings:
+
+```bash
+curl -s -X PUT http://localhost:8080/api/settings   -H "Authorization: Bearer <TOKEN>"   -H 'Content-Type: application/json'   -d '{
+    "portal_title":"ADSentinel",
+    "primary_color":"#0ea5e9",
+    "scan_interval_hours":"6",
+    "retention_days":"365",
+    "default_domain":"corp.example.com"
+  }'
+```
+
+### 7) Frontend helper mapping
+
+The frontend wrappers for these endpoints are in `frontend/src/utils/api.js`:
+- `authApi.changePassword(...)`
+- `customersApi.template()`
+- `customersApi.create(...)`
+- `customersApi.bulk(...)`
+- `settingsApi.schema()`
+- `settingsApi.save(...)`
+
+---
+
 
 ## File Structure
 

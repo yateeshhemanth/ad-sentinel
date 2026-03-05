@@ -41,7 +41,7 @@ const PARAM_DEFINITIONS = [
   { key:"retentionDays",                label:"Data Retention",                  type:"number",unit:"days",     default:365,  category:"Scan",           finding:null },
 ];
 
-const BLANK_CONN = { name:"", domain:"", dc_ip:"", ldap_port:"389", bind_dn:"", bind_password:"", hr_status_url:"", hr_status_token:"" };
+const BLANK_CONN = { name:"", domain:"", dc_ip:"", ldap_port:"389", bind_dn:"", bind_password:"", hr_status_url:"", hr_status_token:"", allow_self_signed:false };
 const BLANK_USER = { name:"", email:"", password:"", role:"analyst" };
 
 const DEFAULT_NOTIFICATIONS = {
@@ -133,11 +133,12 @@ export default function ConnectionManager({ logoUrl, refreshLogo, refreshBrandin
     setTesting(true); setTestResult(null);
     try {
       const result = await scanApi.testConnection({
-        dc_ip:         connForm.dc_ip,
-        ldap_port:     parseInt(connForm.ldap_port) || 389,
-        bind_dn:       connForm.bind_dn,
-        bind_password: connForm.bind_password,
-        domain:        connForm.domain,
+        dc_ip:             connForm.dc_ip,
+        ldap_port:         parseInt(connForm.ldap_port) || 389,
+        bind_dn:           connForm.bind_dn,
+        bind_password:     connForm.bind_password,
+        domain:            connForm.domain,
+        allow_self_signed: !!connForm.allow_self_signed,
       });
       setTestResult(result);
     } catch (err) {
@@ -165,7 +166,11 @@ export default function ConnectionManager({ logoUrl, refreshLogo, refreshBrandin
   const saveConn = async () => {
     setSaving(true);
     try {
-      const payload = { ...connForm, ldap_port: parseInt(connForm.ldap_port)||389 };
+      const payload = {
+        ...connForm,
+        ldap_port: parseInt(connForm.ldap_port)||389,
+        allow_self_signed: !!connForm.allow_self_signed,
+      };
       if (editingConn) {
         // UPDATE existing — always send all credential fields
         const updated = await customersApi.update(editingConn.id, payload);
@@ -193,6 +198,7 @@ export default function ConnectionManager({ logoUrl, refreshLogo, refreshBrandin
       bind_password:    "",  // never pre-fill password
       hr_status_url:    c.hr_status_url    || "",
       hr_status_token:  c.hr_status_token  || "",
+      allow_self_signed: !!c.allow_self_signed,
     });
     setTestResult(null);
     setAddConnModal(true);
@@ -648,6 +654,16 @@ export default function ConnectionManager({ logoUrl, refreshLogo, refreshBrandin
             </div>
             <div style={{ gridColumn:"1/-1" }}>
               <Input label="Bind Password" type="password" placeholder="••••••••" value={connForm.bind_password} onChange={cf("bind_password")} />
+            </div>
+            <div style={{ gridColumn:"1/-1" }}>
+              <label style={{ display:"flex", gap:8, alignItems:"center", fontSize:12, color:T.colors.muted, cursor:"pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={!!connForm.allow_self_signed}
+                  onChange={e => setConnForm(prev => ({ ...prev, allow_self_signed: e.target.checked }))}
+                />
+                Trust self-signed TLS certificates (LDAPS only)
+              </label>
             </div>
           </div>
 

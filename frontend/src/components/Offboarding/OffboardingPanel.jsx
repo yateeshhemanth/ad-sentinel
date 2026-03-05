@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from "react";
 import { THEME as T } from "../../constants/theme";
-import { Btn } from "../shared";
+import { Btn, Modal } from "../shared";
 import { offboardingApi, customersApi } from "../../utils/api";
 
 const FLAG_CONFIG = {
@@ -37,6 +37,9 @@ export default function OffboardingPanel() {
   const [search,      setSearch]      = useState("");
   const [filter,      setFilter]      = useState("all");
   const [tab,         setTab]         = useState("overview");
+  const [contractOpen, setContractOpen] = useState(false);
+  const [contractData, setContractData] = useState(null);
+  const [contractErr,  setContractErr]  = useState("");
 
   useEffect(() => {
     customersApi.list().then(setCustomers).catch(() => {});
@@ -59,6 +62,18 @@ export default function OffboardingPanel() {
     setSearch(""); setFilter("all");
     setTab("records");
     if (id) loadCrossRef(id);
+  };
+
+  const openApiContract = async () => {
+    setContractErr("");
+    setContractData(null);
+    setContractOpen(true);
+    try {
+      const c = await offboardingApi.apiContract();
+      setContractData(c);
+    } catch (err) {
+      setContractErr(err.message || "Failed to load API contract");
+    }
   };
 
   const doSync = async () => {
@@ -108,10 +123,7 @@ export default function OffboardingPanel() {
           </div>
         </div>
         {/* API contract link */}
-        <Btn variant="ghost" onClick={async () => {
-          const c = await offboardingApi.apiContract();
-          alert("HR API Contract:\n\n" + JSON.stringify(c, null, 2));
-        }} style={{ fontSize:11 }}>📄 View API Contract</Btn>
+        <Btn variant="ghost" onClick={openApiContract} style={{ fontSize:11 }}>📄 View API Contract</Btn>
       </div>
 
       {/* Tabs */}
@@ -392,6 +404,34 @@ export default function OffboardingPanel() {
           )}
         </div>
       )}
+
+      <Modal isOpen={contractOpen} onClose={() => setContractOpen(false)} title="HR API Contract" width={760}>
+        {contractErr ? (
+          <div style={{ color: "#ef4444", fontSize: 12 }}>❌ {contractErr}</div>
+        ) : !contractData ? (
+          <div style={{ color: T.colors.muted, fontSize: 12 }}>Loading API contract…</div>
+        ) : (
+          <>
+            <div style={{ fontSize: 11, color: T.colors.muted, marginBottom: 10 }}>
+              Use this contract when integrating your HR endpoint with ADSentinel.
+            </div>
+            <pre style={{
+              margin: 0,
+              padding: 12,
+              borderRadius: 6,
+              border: `1px solid ${T.colors.border}`,
+              background: T.colors.surface,
+              color: T.colors.text,
+              fontSize: 11,
+              lineHeight: 1.5,
+              maxHeight: "55vh",
+              overflow: "auto",
+              whiteSpace: "pre-wrap",
+              wordBreak: "break-word",
+            }}>{JSON.stringify(contractData, null, 2)}</pre>
+          </>
+        )}
+      </Modal>
     </div>
   );
 }
