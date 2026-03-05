@@ -21,7 +21,7 @@ const request = async (method, path, body, options = {}) => {
     localStorage.removeItem("ads_token");
     localStorage.removeItem("ads_user");
     window.location.href = "/login";
-    return;
+    throw new Error("Unauthorized");
   }
 
   const data = await res.json().catch(() => ({}));

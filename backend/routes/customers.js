@@ -7,6 +7,24 @@ const { encrypt } = require("../config/crypto");
 
 const router = express.Router();
 
+const DOMAIN_RE = /^(?=.{3,255}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/;
+
+function validateCustomerEntry(payload) {
+  if (!payload.name || payload.name.length < 2 || payload.name.length > 255) {
+    return "name must be between 2 and 255 characters";
+  }
+  if (!payload.domain || !DOMAIN_RE.test(payload.domain)) {
+    return "domain must be a valid FQDN (e.g. corp.example.com)";
+  }
+  if (payload.ldap_port !== undefined && (!Number.isInteger(payload.ldap_port) || payload.ldap_port < 1 || payload.ldap_port > 65535)) {
+    return "ldap_port must be an integer between 1 and 65535";
+  }
+  if (payload.hr_status_url && !/^https?:\/\//i.test(payload.hr_status_url)) {
+    return "hr_status_url must start with http:// or https://";
+  }
+  return null;
+}
+
 const customerValidators = [
   body("name").optional().isString().trim().isLength({ min: 2, max: 255 }),
   body("domain")
@@ -140,8 +158,9 @@ router.post(
       const raw = req.body.customers[i] || {};
       try {
         const payload = normalizeCustomerPayload(raw);
-        if (!payload.name || !payload.domain) {
-          errors.push({ index: i, error: "name and domain are required" });
+        const entryError = validateCustomerEntry(payload);
+        if (entryError) {
+          errors.push({ index: i, error: entryError });
           continue;
         }
 

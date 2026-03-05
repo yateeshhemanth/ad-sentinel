@@ -171,7 +171,12 @@ router.post("/reset-password", [
 // ── POST /api/auth/change-password (authenticated) ────────────────
 router.post("/change-password", authenticate, [
   body("currentPassword").notEmpty(),
-  body("newPassword").isLength({ min: 8 }),
+  body("newPassword")
+    .isLength({ min: 8 })
+    .matches(/^(?=.*[A-Z])(?=.*[0-9])(?=.*[!@#$%^&*])/)
+    .withMessage("New password must include uppercase, number, and special character")
+    .custom((value, { req }) => value !== req.body.currentPassword)
+    .withMessage("New password must differ from current password"),
 ], async (req, res) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
