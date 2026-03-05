@@ -22,6 +22,7 @@ router.get("/types", authenticate, (req, res) => {
     { id:"compliance_mapping",     label:"Compliance Mapping",       formats:["pdf","csv"] },
     { id:"kerberos_risks",         label:"Kerberos Attack Surface",  formats:["pdf","csv"] },
     { id:"trust_analysis",         label:"Trust Analysis",           formats:["pdf","csv"] },
+    { id:"ad_health_dashboard",    label:"AD Health Dashboard",      formats:["pdf","csv"] },
   ]);
 });
 
@@ -196,6 +197,7 @@ async function fetchReportData(type, customerId, customerName) {
       risk_score:  a.details.risk_score   || 0,
       remediation: a.details.remediation  || "",
       compliance:  a.details.compliance_summary || "",
+      users_affected: (a.details.affected_users || []).join("; "),
       mitre:       (a.details.compliance?.mitre || []).map(m => m.id).join(", "),
       cis:         (a.details.compliance?.cis_v8      || []).join(", "),
       nist:        (a.details.compliance?.nist_800_53 || []).join(", "),
@@ -208,13 +210,102 @@ async function fetchReportData(type, customerId, customerName) {
     return acc;
   }, {});
 
-  return {
+  const base = {
     reportType:   type,
     customerName: customer?.name || customerName || "All Customers",
     domain:       customer?.domain || "—",
     generatedAt:  new Date().toISOString(),
     summary:      { totalAlerts: alerts.length, critical, high, medium, low, securityScore: score, byCategory },
     findings,
+  };
+
+  if (type !== "ad_health_dashboard") return base;
+
+  const userArgs = customerId ? [customerId] : [];
+  const userWhere = customerId ? "WHERE customer_id=$1" : "";
+  const { rows: userStats } = await query(
+    `SELECT
+       COUNT(*) AS total_users,
+       COUNT(*) FILTER (WHERE is_enabled=true) AS enabled_users,
+       COUNT(*) FILTER (WHERE is_enabled=false) AS disabled_users,
+       COUNT(*) FILTER (WHERE password_expired=true) AS pwd_expired,
+       COUNT(*) FILTER (WHERE password_never_expires=true) AS pwd_never_expires,
+       COUNT(*) FILTER (WHERE last_logon IS NULL OR last_logon < NOW() - INTERVAL '90 days') AS inactive_90d,
+       COUNT(*) FILTER (WHERE when_created >= NOW() - INTERVAL '7 days') AS recently_created
+     FROM ad_users ${userWhere}`,
+    userArgs
+  );
+
+  const invArgs = customerId ? [customerId] : [];
+  const invWhere = customerId ? "WHERE customer_id=$1" : "";
+  const { rows: inv } = await query(
+    `SELECT
+       COALESCE(SUM(computers_count),0) AS total_computers,
+       COALESCE(SUM(gpos_count),0) AS total_gpos,
+       COALESCE(SUM(ous_count),0) AS total_ous
+     FROM (
+       SELECT DISTINCT ON (customer_id) customer_id, users_count, groups_count, computers_count, ous_count, gpos_count
+       FROM ad_inventory_snapshots
+       ${invWhere}
+       ORDER BY customer_id, started_at DESC
+     ) latest`,
+    invArgs
+  );
+
+  const dcArgs = customerId ? [customerId] : [];
+  const dcWhere = customerId ? "WHERE s.customer_id = $1" : "";
+  const { rows: domainControllers } = await query(
+    `WITH latest AS (
+       SELECT DISTINCT ON (s.customer_id) s.id, s.customer_id, s.customer_name, s.started_at
+       FROM ad_inventory_snapshots s
+       ${dcWhere}
+       ORDER BY s.customer_id, s.started_at DESC
+     )
+     SELECT l.customer_name,
+            o.object_key,
+            o.attributes->>'dNSHostName' AS dns_host_name,
+            o.attributes->>'operatingSystem' AS operating_system,
+            o.distinguished_name,
+            o.scanned_at
+     FROM latest l
+     JOIN ad_inventory_objects o ON o.snapshot_id = l.id
+     WHERE o.object_type = 'computer'
+     ORDER BY l.customer_name ASC, o.object_key ASC
+     LIMIT 60`,
+    dcArgs
+  );
+
+  const pgArgs = customerId ? [customerId] : [];
+  const pgWhere = customerId ? "WHERE customer_id=$1" : "";
+  const { rows: adminGroups } = await query(
+    `SELECT member_of FROM ad_users ${pgWhere}`,
+    pgArgs
+  );
+  const groupCounts = {};
+  adminGroups.forEach((u) => {
+    (u.member_of || []).forEach((g) => {
+      const name = g.split(",")[0]?.replace("CN=", "") || g;
+      groupCounts[name] = (groupCounts[name] || 0) + 1;
+    });
+  });
+  const privilegedGroups = ["Domain Admins", "Enterprise Admins", "Schema Admins", "Administrators"].map(name => ({
+    name,
+    count: groupCounts[name] || 0,
+  }));
+
+  return {
+    ...base,
+    health: {
+      user_accounts: userStats[0] || {},
+      infrastructure: inv[0] || {},
+      domain_controllers: domainControllers,
+      privileged_groups: privilegedGroups,
+      findings_by_prefix: {
+        gpo: findings.filter(f => f.finding_id?.startsWith("AD-GPO-")).length,
+        trust: findings.filter(f => f.finding_id?.startsWith("AD-TRUST-")).length,
+        dc: findings.filter(f => f.finding_id?.startsWith("AD-DC-")).length,
+      },
+    },
   };
 }
 
@@ -223,24 +314,59 @@ async function generateCSV(data, filepath, type) {
   let columns, records;
   const f = data.findings;
 
-  if (type === "compliance_mapping") {
+  if (type === "ad_health_dashboard") {
+    const h = data.health || {};
+    const users = h.user_accounts || {};
+    const infra = h.infrastructure || {};
+    const fx = h.findings_by_prefix || {};
+    const dcs = Array.isArray(h.domain_controllers) ? h.domain_controllers : [];
+    const pgs = Array.isArray(h.privileged_groups) ? h.privileged_groups : [];
+    columns = ["Section", "Metric", "Value"];
+    records = [
+      ["Scope", "Customer", data.customerName],
+      ["Scope", "Domain", data.domain],
+      ["User Accounts", "Total Users", users.total_users || 0],
+      ["User Accounts", "Enabled Users", users.enabled_users || 0],
+      ["User Accounts", "Disabled Users", users.disabled_users || 0],
+      ["User Accounts", "Password Expired", users.pwd_expired || 0],
+      ["User Accounts", "Password Never Expires", users.pwd_never_expires || 0],
+      ["User Accounts", "Inactive (90+ days)", users.inactive_90d || 0],
+      ["User Accounts", "Recently Created (7 days)", users.recently_created || 0],
+      ["Infrastructure", "Computer Objects", infra.total_computers || 0],
+      ["Infrastructure", "Group Policy Objects", infra.total_gpos || 0],
+      ["Infrastructure", "Organizational Units", infra.total_ous || 0],
+      ["Infrastructure", "Domain Controller Objects", dcs.length],
+      ["Findings", "GPO Findings", fx.gpo || 0],
+      ["Findings", "Domain Controller Findings", fx.dc || 0],
+      ["Findings", "Trust Findings", fx.trust || 0],
+      ["Risk", "Security Score", data.summary?.securityScore || 0],
+      ["Risk", "Critical", data.summary?.critical || 0],
+      ["Risk", "High", data.summary?.high || 0],
+      ["Risk", "Medium", data.summary?.medium || 0],
+      ["Risk", "Low", data.summary?.low || 0],
+    ];
+    pgs.forEach((g) => records.push(["Privileged Groups", g.name, g.count || 0]));
+    dcs.slice(0, 20).forEach((dc, idx) => {
+      records.push(["Domain Controllers", `DC ${idx + 1}`, dc.object_key || dc.dns_host_name || "Unknown"]);
+    });
+  } else if (type === "compliance_mapping") {
     columns = ["Finding ID","Title","Severity","CIS v8","NIST 800-53","ISO 27001","SOC 2","MITRE ATT&CK"];
     records = f.map(x => [x.finding_id, x.title, x.severity, x.cis, x.nist, x.iso, x.soc2, x.mitre]);
   } else if (type === "kerberos_risks") {
     const kf = f.filter(x => x.category === "privilege");
-    columns = ["Finding ID","Title","Severity","Affected","Risk Score","Remediation"];
-    records = kf.map(x => [x.finding_id, x.title, x.severity, x.affected, x.risk_score, x.remediation]);
+    columns = ["Finding ID","Title","Severity","Users Affected","Affected Count","Risk Score","Remediation"];
+    records = kf.map(x => [x.finding_id, x.title, x.severity, x.users_affected, x.affected, x.risk_score, x.remediation]);
   } else if (type === "trust_analysis") {
     const tf = f.filter(x => x.category === "trust");
-    columns = ["Finding ID","Title","Severity","Affected","Remediation"];
-    records = tf.map(x => [x.finding_id, x.title, x.severity, x.affected, x.remediation]);
+    columns = ["Finding ID","Title","Severity","Users Affected","Affected Count","Remediation"];
+    records = tf.map(x => [x.finding_id, x.title, x.severity, x.users_affected, x.affected, x.remediation]);
   } else {
-    columns = ["Finding ID","Title","Severity","Category","Affected","Risk Score","Compliance","Remediation"];
-    records = f.map(x => [x.finding_id, x.title, x.severity, x.category, x.affected, x.risk_score, x.compliance, x.remediation]);
+    columns = ["Finding ID","Title","Severity","Category","Users Affected","Affected Count","Risk Score","Compliance","Remediation"];
+    records = f.map(x => [x.finding_id, x.title, x.severity, x.category, x.users_affected, x.affected, x.risk_score, x.compliance, x.remediation]);
   }
 
   if (!records.length) {
-    records = [["—","No data — run a scan first","","","","","",""]];
+    records = [["—","No data — run a scan first","","","","","","",""]];
   }
   fs.writeFileSync(filepath, stringify([columns, ...records]), "utf8");
 }
@@ -261,6 +387,133 @@ async function generatePDF(data, filepath, type, customerName, user) {
     const GRAY  = "#64748b";
     const WHITE = "#e2e8f0";
     const s     = data.summary;
+
+    if (type === "ad_health_dashboard") {
+      const health = data.health || {};
+      const users = health.user_accounts || {};
+      const infra = health.infrastructure || {};
+      const fx = health.findings_by_prefix || {};
+      const dcs = Array.isArray(health.domain_controllers) ? health.domain_controllers : [];
+      const pgs = Array.isArray(health.privileged_groups) ? health.privileged_groups : [];
+
+      doc.rect(0, 0, doc.page.width, 96).fill(DARK);
+      doc.fillColor(BLUE).fontSize(20).font("Helvetica-Bold").text("Active Directory Health Dashboard", 50, 28);
+      doc.fillColor(WHITE).fontSize(12).font("Helvetica").text(`${customerName} · ${data.domain}`, 50, 56);
+      doc.fillColor(GRAY).fontSize(9).text(`Generated: ${new Date().toLocaleString()} · By: ${user.name}`, 50, 76);
+
+      const cards = [
+        ["User Accounts", users.total_users || 0, `${users.enabled_users || 0} enabled / ${users.disabled_users || 0} disabled`],
+        ["Domain Controllers", dcs.length, "Latest inventory snapshot"],
+        ["Group Policies", infra.total_gpos || 0, `${infra.total_ous || 0} OUs`],
+        ["Security Score", `${s.securityScore}/100`, `${s.critical || 0} critical · ${s.high || 0} high`],
+      ];
+      let cx = 50;
+      cards.forEach(([title, metric, sub]) => {
+        doc.roundedRect(cx, 112, 120, 76, 6).fillAndStroke("#0f172a", "#1e293b");
+        doc.fillColor(GRAY).fontSize(8).font("Helvetica-Bold").text(title, cx + 8, 122, { width: 104 });
+        doc.fillColor(BLUE).fontSize(17).font("Helvetica-Bold").text(String(metric), cx + 8, 140, { width: 104 });
+        doc.fillColor(WHITE).fontSize(7).font("Helvetica").text(String(sub), cx + 8, 163, { width: 104 });
+        cx += 130;
+      });
+
+      let y = 210;
+      doc.fillColor(WHITE).fontSize(12).font("Helvetica-Bold").text("Domain Controllers Status", 50, y);
+      y += 16;
+      doc.rect(50, y, 495, 15).fill("#1e3a8a");
+      const headers = ["Controller", "Host", "OS", "Site"];
+      const widths = [120, 130, 155, 90];
+      let x = 54;
+      headers.forEach((h, i) => {
+        doc.fillColor(WHITE).fontSize(8).font("Helvetica-Bold").text(h, x, y + 4, { width: widths[i] });
+        x += widths[i];
+      });
+      y += 17;
+
+      dcs.slice(0, 14).forEach((dc, idx) => {
+        if (y > 680) return;
+        if (idx % 2 === 0) doc.rect(50, y, 495, 14).fill("#0b1220");
+        const site = String(dc.distinguished_name || "").match(/CN=Servers,CN=([^,]+)/i)?.[1] || "N/A";
+        const row = [dc.object_key || "—", dc.dns_host_name || "—", dc.operating_system || "—", site];
+        x = 54;
+        row.forEach((v, i) => {
+          doc.fillColor(WHITE).fontSize(7).font("Helvetica").text(String(v), x, y + 3, { width: widths[i], ellipsis: true });
+          x += widths[i];
+        });
+        y += 14;
+      });
+
+      y += 14;
+      doc.fillColor(WHITE).fontSize(12).font("Helvetica-Bold").text("User Account Summary", 50, y);
+      y += 14;
+      [
+        ["Password Expired", users.pwd_expired || 0],
+        ["Password Never Expires", users.pwd_never_expires || 0],
+        ["Inactive (90+ days)", users.inactive_90d || 0],
+        ["Recently Created (7 days)", users.recently_created || 0],
+        ["GPO Findings", fx.gpo || 0],
+        ["DC Findings", fx.dc || 0],
+        ["Trust Findings", fx.trust || 0],
+      ].forEach(([k, v], idx) => {
+        const ry = y + (idx * 13);
+        doc.fillColor(idx % 2 ? GRAY : WHITE).fontSize(8.5).font("Helvetica").text(k, 54, ry, { width: 250 });
+        doc.fillColor(BLUE).fontSize(8.5).font("Helvetica-Bold").text(String(v), 330, ry, { width: 80, align: "right" });
+      });
+
+      y += 102;
+      doc.fillColor(WHITE).fontSize(12).font("Helvetica-Bold").text("Privileged Group Coverage", 50, y);
+      y += 14;
+      pgs.forEach((g, idx) => {
+        const ry = y + (idx * 12);
+        doc.fillColor(GRAY).fontSize(8).font("Helvetica").text(g.name, 54, ry, { width: 240 });
+        doc.fillColor(BLUE).fontSize(8).font("Helvetica-Bold").text(String(g.count || 0), 200, ry, { width: 40, align: "right" });
+      });
+
+      doc.addPage();
+      doc.rect(0, 0, doc.page.width, 54).fill(DARK);
+      doc.fillColor(BLUE).fontSize(14).font("Helvetica-Bold").text("AD Findings Detail", 50, 18);
+      doc.fillColor(GRAY).fontSize(9).text(`${data.findings.length} finding(s) sorted by severity`, 50, 38);
+
+      const HDR = ["ID", "Title", "Severity", "Category", "Affected"];
+      const COLW = [80, 230, 80, 80, 50];
+      let ty = 68;
+      doc.rect(44, ty - 5, doc.page.width - 88, 19).fill("#0f1629");
+      x = 50;
+      HDR.forEach((h, i) => {
+        doc.fillColor(GRAY).fontSize(8).font("Helvetica-Bold").text(h, x, ty);
+        x += COLW[i];
+      });
+      ty += 20;
+
+      const sevOrder = { critical: 0, high: 1, medium: 2, low: 3 };
+      const sevColor = { critical: RED, high: AMBER, medium: BLUE, low: GRAY };
+      const sorted = [...data.findings].sort((a, b) => (sevOrder[a.severity] ?? 9) - (sevOrder[b.severity] ?? 9));
+      sorted.forEach((f, idx) => {
+        if (ty > 760) { doc.addPage(); ty = 50; }
+        if (idx % 2 === 0) doc.rect(44, ty - 3, doc.page.width - 88, 16).fill("#050810");
+        x = 50;
+        [f.finding_id, f.title, f.severity.toUpperCase(), f.category, String(f.affected)].forEach((val, ci) => {
+          doc.fillColor(ci === 2 ? (sevColor[f.severity] || WHITE) : WHITE)
+            .fontSize(7.4)
+            .font(ci === 2 ? "Helvetica-Bold" : "Helvetica")
+            .text(String(val), x, ty, { width: COLW[ci] - 4, ellipsis: true });
+          x += COLW[ci];
+        });
+        ty += 15;
+      });
+
+      const range = doc.bufferedPageRange();
+      for (let i = 0; i < range.count; i++) {
+        doc.switchToPage(range.start + i);
+        doc.fillColor(GRAY).fontSize(8).font("Helvetica")
+          .text(`ADSentinel Enterprise · AD Health Dashboard · Page ${i + 1} of ${range.count}`,
+            50, doc.page.height - 28, { align: "center", width: doc.page.width - 100 });
+      }
+
+      doc.end();
+      stream.on("finish", resolve);
+      stream.on("error", reject);
+      return;
+    }
 
     // ── Page 1 header ──────────────────────────────────────────────
     doc.rect(0, 0, doc.page.width, 96).fill(DARK);
@@ -390,6 +643,7 @@ function formatReportTitle(type) {
     compliance_mapping:     "Compliance Mapping Report",
     kerberos_risks:         "Kerberos Attack Surface Report",
     trust_analysis:         "Trust Analysis Report",
+    ad_health_dashboard:    "AD Health Dashboard Report",
     breach_exposure:        "Breach Exposure Report",
     full_audit:             "Full AD Audit Report",
   })[type] || type.replace(/_/g, " ");

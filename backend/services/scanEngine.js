@@ -18,6 +18,7 @@ const path           = require("path");
 const { query }      = require("../config/db");
 const { decrypt }    = require("../config/crypto");
 const logger         = require("../config/logger");
+const { notifyNewAlerts } = require("./notificationService");
 
 // ─────────────────────────────────────────────────────────────────────
 // Finding library helpers
@@ -271,10 +272,100 @@ async function storeUserDirectory(customerId, customerName, users) {
   return stored;
 }
 
+
+function normalizeAuditParams(globalParams, customer) {
+  let local = {};
+  try {
+    if (customer?.audit_params) {
+      local = typeof customer.audit_params === "string" ? JSON.parse(customer.audit_params) : customer.audit_params;
+    }
+  } catch (err) {
+    logger.warn("Invalid customer audit_params JSON; ignoring overrides for " + customer.name + ": " + err.message);
+  }
+  return { ...(globalParams || {}), ...(local?.standard || {}), ...(local || {}) };
+}
+
+function getExclusionSet(auditParams) {
+  const list = auditParams?.exceptions || auditParams?.excluded_accounts || [];
+  const arr = Array.isArray(list) ? list : [];
+  return new Set(arr.map(x => String(x || "").toLowerCase()).filter(Boolean));
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // Run all 31 finding checks
 // ─────────────────────────────────────────────────────────────────────
-async function runFindingChecks(client, dcDN, auditParams) {
+
+
+function mapInventoryEntry(entry, objectType) {
+  const attrs = entry || {};
+  return {
+    object_type: objectType,
+    object_key: attrs.sAMAccountName || attrs.cn || attrs.name || attrs.distinguishedName || null,
+    distinguished_name: attrs.distinguishedName || null,
+    attributes: attrs,
+  };
+}
+
+async function collectInventoryObjects(client, dcDN) {
+  const plans = [
+    { type: "user", filter: "(&(objectClass=user)(!(objectClass=computer)))", attrs: ["sAMAccountName", "distinguishedName", "mail", "whenCreated"] },
+    { type: "group", filter: "(objectClass=group)", attrs: ["cn", "distinguishedName", "groupType", "whenCreated"] },
+    { type: "computer", filter: "(objectClass=computer)", attrs: ["cn", "dNSHostName", "distinguishedName", "operatingSystem", "whenCreated"] },
+    { type: "ou", filter: "(objectClass=organizationalUnit)", attrs: ["ou", "distinguishedName", "whenCreated"] },
+    { type: "gpo", filter: "(objectClass=groupPolicyContainer)", attrs: ["displayName", "name", "distinguishedName", "whenCreated"] },
+  ];
+
+  const out = { user: [], group: [], computer: [], ou: [], gpo: [] };
+  for (const plan of plans) {
+    try {
+      const entries = await searchLdap(client, dcDN, plan.filter, plan.attrs, "sub");
+      out[plan.type] = entries.map(e => mapInventoryEntry(e, plan.type));
+    } catch (err) {
+      logger.warn(`Inventory collection failed for ${plan.type}: ${err.message}`);
+    }
+  }
+  return out;
+}
+
+async function storeInventorySnapshot(customerId, customerName, inventory) {
+  const counts = {
+    users: inventory.user.length,
+    groups: inventory.group.length,
+    computers: inventory.computer.length,
+    ous: inventory.ou.length,
+    gpos: inventory.gpo.length,
+  };
+
+  const { rows } = await query(
+    `INSERT INTO ad_inventory_snapshots
+      (customer_id, customer_name, users_count, groups_count, computers_count, ous_count, gpos_count)
+     VALUES ($1,$2,$3,$4,$5,$6,$7)
+     RETURNING id`,
+    [customerId, customerName, counts.users, counts.groups, counts.computers, counts.ous, counts.gpos]
+  );
+  const snapshotId = rows[0].id;
+
+  const all = [...inventory.user, ...inventory.group, ...inventory.computer, ...inventory.ou, ...inventory.gpo];
+  for (const obj of all) {
+    try {
+      await query(
+        `INSERT INTO ad_inventory_objects
+          (snapshot_id, customer_id, customer_name, object_type, object_key, distinguished_name, attributes, scanned_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,NOW())`,
+        [snapshotId, customerId, customerName, obj.object_type, obj.object_key, obj.distinguished_name, JSON.stringify(obj.attributes || {})]
+      );
+    } catch (err) {
+      logger.warn(`Inventory object store failed (${obj.object_type}): ${err.message}`);
+    }
+  }
+
+  return { snapshotId, ...counts };
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// Run all 31 finding checks
+// ─────────────────────────────────────────────────────────────────────
+async function runFindingChecks(client, dcDN, auditParams, exclusionSet = new Set()) {
   const lib     = getLibrary();
   const results = [];
 
@@ -301,15 +392,19 @@ async function runFindingChecks(client, dcDN, auditParams) {
       if (entries.length === 0) continue;
 
       // Extract affected account names
-      const affectedUsers = entries
+      const rawAffectedUsers = entries
         .map(e => {
           if (e.sAMAccountName) return e.sAMAccountName;
           if (e.cn) return e.cn;
           if (e.distinguishedName) return e.distinguishedName.split(",")[0].replace("CN=","");
           return null;
         })
-        .filter(Boolean)
+        .filter(Boolean);
+
+      const affectedUsers = rawAffectedUsers
+        .filter(u => !exclusionSet.has(String(u).toLowerCase()))
         .slice(0, 50);
+      const effectiveCount = rawAffectedUsers.filter(u => !exclusionSet.has(String(u).toLowerCase())).length || entries.length;
 
       results.push({
         finding_id:         finding.id,
@@ -318,9 +413,9 @@ async function runFindingChecks(client, dcDN, auditParams) {
         severity:           finding.severity,
         risk_score:         finding.risk_score,
         category:           finding.category,
-        affected_count:     entries.length,
+        affected_count:     effectiveCount,
         affected_users:     affectedUsers,
-        remediation:        finding.remediation,
+        remediation:        finding.remediation || "Review AD policy baseline and enforce least privilege.",
         compliance:         finding.compliance,
         compliance_summary: buildComplianceSummary(finding.compliance),
       });
@@ -377,12 +472,16 @@ async function runScan(customerId) {
     };
   }
 
-  // Load audit params
-  let auditParams = {};
+  // Load global + customer-specific audit params
+  let globalAuditParams = {};
   try {
     const { rows: s } = await query("SELECT value FROM app_settings WHERE key = 'audit_params'");
-    if (s.length) auditParams = JSON.parse(s[0].value);
-  } catch {}
+    if (s.length) globalAuditParams = JSON.parse(s[0].value);
+  } catch (err) {
+    logger.warn("Invalid audit_params JSON; using defaults. " + err.message);
+  }
+  const auditParams = normalizeAuditParams(globalAuditParams, customer);
+  const exclusionSet = getExclusionSet(auditParams);
 
   const port   = parseInt(customer.ldap_port) || 389;
   const useTLS = port === 636 || port === 3269;
@@ -416,23 +515,64 @@ async function runScan(customerId) {
     try {
       const adUsers = await collectUserDirectory(client, dcDN);
       userCount = await storeUserDirectory(customerId, customer.name, adUsers);
+      const seen = adUsers.map(u => u.sam_account_name).filter(Boolean);
+      await query(
+        `DELETE FROM ad_users WHERE customer_id = $1 AND sam_account_name <> ALL($2::text[])`,
+        [customerId, seen.length ? seen : ["__none__"]]
+      );
       logger.info("User directory: " + userCount + " accounts stored");
     } catch (err) {
       logger.warn("User directory error: " + err.message);
     }
 
-    // 2. Run finding checks
-    logger.info("Running " + getLibrary().findings.length + " finding checks…");
-    const findings = await runFindingChecks(client, dcDN, auditParams);
+    // 2. Collect broader AD object inventory (historical snapshots)
+    let inventorySummary = { snapshotId: null, users: 0, groups: 0, computers: 0, ous: 0, gpos: 0 };
+    try {
+      const inventory = await collectInventoryObjects(client, dcDN);
+      inventorySummary = await storeInventorySnapshot(customerId, customer.name, inventory);
+      logger.info(`Inventory snapshot ${inventorySummary.snapshotId} stored: users=${inventorySummary.users}, groups=${inventorySummary.groups}, computers=${inventorySummary.computers}, ous=${inventorySummary.ous}, gpos=${inventorySummary.gpos}`);
+    } catch (err) {
+      logger.warn("Inventory snapshot failed: " + err.message);
+    }
 
-    // 3. Write alerts
+    // 3. Run finding checks
+    logger.info("Running " + getLibrary().findings.length + " finding checks…");
+    const findings = await runFindingChecks(client, dcDN, auditParams, exclusionSet);
+
+    // 4. Write alerts
     let created = 0, skipped = 0;
+    const createdAlerts = [];
     for (const f of findings) {
       const { rows: existing } = await query(
         "SELECT id FROM alerts WHERE customer_id=$1 AND details->>'finding_id'=$2 AND is_acked=false",
         [customerId, f.finding_id]
       );
-      if (existing.length) { skipped++; continue; }
+
+      if (existing.length) {
+        await query(
+          "UPDATE alerts SET message=$1, severity=$2, details=$3, created_at=NOW() WHERE id=$4",
+          [
+            "[" + f.finding_id + "] " + f.title + " — " + f.affected_count + " account(s) affected",
+            f.severity,
+            JSON.stringify({
+              finding_id:         f.finding_id,
+              category:           f.category,
+              description:        f.description,
+              remediation:        f.remediation,
+              risk_score:         f.risk_score,
+              affected_count:     f.affected_count,
+              affected_users:     f.affected_users,
+              compliance:         f.compliance,
+              compliance_summary: f.compliance_summary,
+              scan_type:          "ldap",
+              scanned_at:         new Date().toISOString(),
+            }),
+            existing[0].id,
+          ]
+        );
+        skipped++;
+        continue;
+      }
 
       await query(
         "INSERT INTO alerts (customer_id, customer_name, message, severity, details) VALUES ($1,$2,$3,$4,$5)",
@@ -455,6 +595,12 @@ async function runScan(customerId) {
           }),
         ]
       );
+      createdAlerts.push({
+        finding_id: f.finding_id,
+        title: f.title,
+        severity: f.severity,
+        affected_count: f.affected_count,
+      });
       created++;
     }
 
@@ -465,11 +611,22 @@ async function runScan(customerId) {
       new_alerts:    created,
       existing_open: skipped,
       users_stored:  userCount,
+      inventory: {
+        snapshot_id: inventorySummary.snapshotId,
+        users: inventorySummary.users,
+        groups: inventorySummary.groups,
+        computers: inventorySummary.computers,
+        ous: inventorySummary.ous,
+        gpos: inventorySummary.gpos,
+      },
       customer:      customer.name,
       dc:            customer.dc_ip + ":" + port,
       base_dn:       dcDN,
       status:        "completed",
     };
+
+    await notifyNewAlerts(summary, createdAlerts);
+
     logger.info("Scan complete: " + JSON.stringify(summary));
     return summary;
 

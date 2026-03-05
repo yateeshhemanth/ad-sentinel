@@ -82,6 +82,8 @@ const initSchema = async () => {
         last_scan        TIMESTAMPTZ,
         hr_status_url    TEXT,
         hr_status_token  TEXT,
+        allow_self_signed BOOLEAN DEFAULT false,
+        audit_params     TEXT,
         created_at       TIMESTAMPTZ DEFAULT NOW()
       );
 
@@ -161,6 +163,33 @@ const initSchema = async () => {
         UNIQUE(customer_id, sam_account_name)
       );
 
+      CREATE TABLE IF NOT EXISTS ad_inventory_snapshots (
+        id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        customer_id      UUID REFERENCES customers(id) ON DELETE CASCADE,
+        customer_name    VARCHAR(255),
+        started_at       TIMESTAMPTZ DEFAULT NOW(),
+        users_count      INTEGER DEFAULT 0,
+        groups_count     INTEGER DEFAULT 0,
+        computers_count  INTEGER DEFAULT 0,
+        ous_count        INTEGER DEFAULT 0,
+        gpos_count       INTEGER DEFAULT 0
+      );
+
+      CREATE TABLE IF NOT EXISTS ad_inventory_objects (
+        id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+        snapshot_id       UUID REFERENCES ad_inventory_snapshots(id) ON DELETE CASCADE,
+        customer_id       UUID REFERENCES customers(id) ON DELETE CASCADE,
+        customer_name     VARCHAR(255),
+        object_type       VARCHAR(50) NOT NULL,
+        object_key        VARCHAR(512),
+        distinguished_name TEXT,
+        attributes        JSONB,
+        scanned_at        TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_ad_inventory_objects_snapshot ON ad_inventory_objects(snapshot_id);
+      CREATE INDEX IF NOT EXISTS idx_ad_inventory_objects_customer_type ON ad_inventory_objects(customer_id, object_type);
+
       CREATE TABLE IF NOT EXISTS app_settings (
         key              VARCHAR(255) PRIMARY KEY,
         value            TEXT,
@@ -195,6 +224,12 @@ const initSchema = async () => {
         END IF;
         IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='customers' AND column_name='hr_status_token') THEN
           ALTER TABLE customers ADD COLUMN hr_status_token TEXT;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='customers' AND column_name='allow_self_signed') THEN
+          ALTER TABLE customers ADD COLUMN allow_self_signed BOOLEAN DEFAULT false;
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM information_schema.columns WHERE table_name='customers' AND column_name='audit_params') THEN
+          ALTER TABLE customers ADD COLUMN audit_params TEXT;
         END IF;
       END $$;
     `).catch(e => logger.warn("Migration warning: " + e.message));
