@@ -37,7 +37,35 @@ const WEAK_PASSWORDS = new Set([
   "password", "password123", "admin", "admin123", "welcome", "welcome123",
   "qwerty", "qwerty123", "letmein", "123456", "12345678", "123456789",
   "p@ssw0rd", "changeme", "iloveyou", "summer2024", "winter2024",
+  "information", "information321", "welcome1", "password1", "admin1",
 ]);
+
+const L33T = { "@":"a", "$":"s", "!":"i", "0":"o", "1":"i", "3":"e", "4":"a", "5":"s", "7":"t" };
+
+function normalizePasswordVariant(input) {
+  const p = String(input || "").trim().toLowerCase();
+  const deLeet = p.replace(/[@$!013457]/g, (ch) => L33T[ch] || ch);
+  return {
+    raw: p,
+    alphaNum: p.replace(/[^a-z0-9]/g, ""),
+    deLeet,
+    deLeetAlphaNum: deLeet.replace(/[^a-z0-9]/g, ""),
+  };
+}
+
+function isExposedPassword(pwd) {
+  const v = normalizePasswordVariant(pwd);
+  const candidates = [v.raw, v.alphaNum, v.deLeet, v.deLeetAlphaNum];
+
+  if (candidates.some((c) => WEAK_PASSWORDS.has(c))) return { ok: true, reason: "known_weak_list" };
+
+  const weakRoots = ["password", "admin", "welcome", "letmein", "qwerty", "information", "changeme", "iloveyou"];
+  if (candidates.some((c) => weakRoots.some((r) => c.startsWith(r) || c.endsWith(r)))) {
+    return { ok: true, reason: "weak_dictionary_variant" };
+  }
+
+  return { ok: false, reason: "" };
+}
 
 function parsePasswordList(body) {
   if (Array.isArray(body.passwords)) return body.passwords.map(String).map(s => s.trim()).filter(Boolean);
@@ -53,8 +81,9 @@ router.post("/password-list-scan", authenticate, requireRole("admin", "engineer"
 
   const unique = [...new Set(items.map(p => p.trim()).filter(Boolean))];
   const matches = unique
-    .filter(p => WEAK_PASSWORDS.has(p.toLowerCase()))
-    .map(p => ({ password: p, source: "known_weak_list" }));
+    .map((p) => ({ password: p, result: isExposedPassword(p) }))
+    .filter((x) => x.result.ok)
+    .map((x) => ({ password: x.password, source: x.result.reason }));
 
   res.json({
     total_checked: unique.length,
