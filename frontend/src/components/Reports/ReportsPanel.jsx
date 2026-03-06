@@ -190,12 +190,12 @@ export default function ReportsPanel() {
 
       <div style={{ background:T.colors.card, border:`1px solid ${T.colors.border}`, borderRadius:8, padding:16, display:"flex", flexDirection:"column", gap:12 }}>
         <div style={{ fontSize:12, fontWeight:700 }}>Exposed Password List Check</div>
-        <div style={{ fontSize:11, color:T.colors.muted }}>Upload/paste `username:password` entries. Usernames are validated against the selected customer AD/DC user directory before matching weak/exposed passwords. Supports txt/log/csv/pdf/xls/xlsx.</div>
+        <div style={{ fontSize:11, color:T.colors.muted }}>Upload/paste passwords (one per line) or optional username:password entries. For password-only input, the checker maps matches across all AD/DC users in the selected customer directory. Supports txt/log/csv/pdf/xls/xlsx.</div>
         <textarea
           value={passwordText}
           onChange={(e) => setPasswordText(e.target.value)}
-          placeholder="krbtgt:password
-svc_backup:Summer2024!"
+          placeholder="Inf0rmati0n@321
+Summer2024!"
           style={{ minHeight:120, resize:"vertical", background:T.colors.surface, border:`1px solid ${T.colors.border}`, borderRadius:6, color:T.colors.text, padding:10, fontSize:12, fontFamily:T.fonts.mono }}
         />
         <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
@@ -209,7 +209,7 @@ svc_backup:Summer2024!"
         {passwordResult && (
           <div style={{ background:T.colors.surface, border:`1px solid ${T.colors.border}`, borderRadius:6, padding:10 }}>
             <div style={{ fontSize:11, color:T.colors.muted, marginBottom:6 }}>
-              Checked: <strong style={{ color:T.colors.text }}>{passwordResult.total_checked}</strong> · Matched: <strong style={{ color: passwordResult.matched > 0 ? T.colors.danger : T.colors.ok }}>{passwordResult.matched}</strong> · Directory Skipped: <strong style={{ color:T.colors.muted }}>{passwordResult.directory_skipped || 0}</strong>
+              Checked: <strong style={{ color:T.colors.text }}>{passwordResult.total_checked}</strong> · Matched: <strong style={{ color: passwordResult.matched > 0 ? T.colors.danger : T.colors.ok }}>{passwordResult.matched}</strong> · Directory Skipped: <strong style={{ color:T.colors.muted }}>{passwordResult.directory_skipped || 0}</strong> · Expanded(password-only): <strong style={{ color:T.colors.muted }}>{passwordResult.expanded_from_password_only || 0}</strong>{passwordResult.truncated ? " · ⚠ truncated" : ""}
             </div>
             <div style={{ maxHeight:140, overflow:"auto", fontSize:11, fontFamily:T.fonts.mono }}>
               {(passwordResult.matches || []).length ? passwordResult.matches.map((m, i) => (
