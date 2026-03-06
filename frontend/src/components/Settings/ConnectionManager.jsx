@@ -62,7 +62,7 @@ const DEFAULT_NOTIFICATIONS = {
 const DEFAULT_BRANDING = {
   portal_title:    "ADSentinel",
   portal_subtitle: "Enterprise Active Directory Security",
-  primary_color:   "#0ea5e9",
+  primary_color:   "#22c55e",
 };
 
 const BASE_PARAM_VALUES = Object.fromEntries(PARAM_DEFINITIONS.map(p => [p.key, p.default]));
@@ -336,11 +336,19 @@ export default function ConnectionManager({ logoUrl, refreshLogo, refreshBrandin
   };
 
   const uploadLogo = async (e) => {
-    const file = e.target.files?.[0]; if (!file) return;
+    const file = e.target.files?.[0];
+    if (!file) return;
     setLogoUploading(true);
-    try { const r = await logoApi.upload(file); refreshLogo(r.logoUrl); showSaved("✅ Logo updated"); }
-    catch (err) { alert(err.message); }
-    setLogoUploading(false);
+    try {
+      const r = await logoApi.upload(file);
+      if (refreshLogo) refreshLogo(r.logoUrl);
+      showSaved("✅ Logo updated");
+    } catch (err) {
+      alert(err.message || "Logo upload failed");
+    } finally {
+      setLogoUploading(false);
+      e.target.value = "";
+    }
   };
 
   const toggleUser = async (id, is_active) => {
@@ -607,24 +615,24 @@ export default function ConnectionManager({ logoUrl, refreshLogo, refreshBrandin
         <div style={{ display:"flex", flexDirection:"column", gap:16 }}>
           <div>
             <div style={{ fontSize:13, fontWeight:700 }}>Portal Branding</div>
-            <div style={{ fontSize:11, color:T.colors.muted, marginTop:3 }}>Customize the portal title, colors, and logo</div>
+            <div style={{ fontSize:11, color:"#94a3b8", marginTop:3 }}>Customize the portal title, colors, and logo</div>
           </div>
 
           {/* Logo upload */}
-          <div style={{ background:T.colors.card, border:`1px solid ${T.colors.border}`, borderRadius:8, padding:20, maxWidth:480 }}>
+          <div style={{ background:"linear-gradient(180deg, rgba(34,197,94,0.08), rgba(20,28,53,1))", border:`1px solid ${T.colors.ok}55`, borderRadius:8, padding:20, maxWidth:520 }}>
             <div style={{ fontSize:12, fontWeight:700, marginBottom:14 }}>Portal Logo</div>
-            <div style={{ background:T.colors.surface, border:`2px dashed ${T.colors.border}`, borderRadius:8, padding:24, textAlign:"center", marginBottom:14 }}>
+            <div style={{ background:T.colors.surface, border:`2px dashed ${T.colors.ok}66`, borderRadius:8, padding:24, minHeight:130, display:"flex", alignItems:"center", justifyContent:"center", textAlign:"center", marginBottom:14 }}>
               {logoUrl
-                ? <img src={logoUrl} alt="Logo" style={{ maxHeight:64, maxWidth:240, objectFit:"contain" }} />
-                : <div style={{ color:T.colors.muted, fontSize:13 }}><div style={{ fontSize:32, marginBottom:8 }}>🖼️</div>No logo uploaded</div>}
+                ? <img src={logoUrl} alt="Logo" style={{ maxHeight:72, maxWidth:280, objectFit:"contain", filter:"drop-shadow(0 0 10px rgba(34,197,94,0.22))" }} />
+                : <div style={{ color:"#94a3b8", fontSize:13 }}><div style={{ fontSize:32, marginBottom:8 }}>🖼️</div>No logo uploaded</div>}
             </div>
             {isAdmin && (
-              <div style={{ display:"flex", gap:10 }}>
+              <div style={{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
                 <label>
                   <Btn variant="secondary">{logoUploading?"Uploading…":"⬆ Upload Logo"}</Btn>
                   <input type="file" accept=".png,.jpg,.jpeg,.svg,.webp" style={{ display:"none" }} onChange={uploadLogo} />
                 </label>
-                {logoUrl && <Btn variant="danger" onClick={() => { logoApi.remove(); refreshLogo(null); }}>Remove</Btn>}
+                {logoUrl && <Btn variant="danger" onClick={async () => { await logoApi.remove().catch(() => {}); if (refreshLogo) refreshLogo(null); showSaved("✅ Logo removed"); }}>Remove</Btn>}
               </div>
             )}
             <div style={{ marginTop:10, fontSize:11, color:T.colors.muted }}>PNG, JPG, SVG, WebP · Max 2MB · Transparent background recommended</div>

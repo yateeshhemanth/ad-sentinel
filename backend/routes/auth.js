@@ -82,7 +82,7 @@ router.get("/me", authenticate, async (req, res) => {
       logoUrl:       s.logo_url       || null,
       portalTitle:   s.portal_title   || "ADSentinel",
       portalSubtitle:s.portal_subtitle|| "Enterprise Active Directory Security",
-      primaryColor:  s.primary_color  || "#0ea5e9",
+      primaryColor:  s.primary_color  || "#22c55e",
     });
   } catch (err) {
     logger.error("GET /me error:", err);
@@ -212,9 +212,9 @@ async function sendResetEmail(to, resetUrl) {
     subject: "ADSentinel — Password Reset Request",
     html: `
       <div style="font-family:sans-serif;max-width:500px;margin:auto">
-        <h2 style="color:#0ea5e9">ADSentinel Password Reset</h2>
+        <h2 style="color:#22c55e">ADSentinel Password Reset</h2>
         <p>You requested a password reset. Click below within 1 hour:</p>
-        <a href="${resetUrl}" style="display:inline-block;background:#0ea5e9;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold">Reset Password</a>
+        <a href="${resetUrl}" style="display:inline-block;background:#22c55e;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold">Reset Password</a>
         <p style="color:#888;font-size:12px;margin-top:24px">If you didn't request this, ignore this email.</p>
       </div>
     `,

@@ -9,7 +9,7 @@ const router = express.Router();
 const SETTINGS_SCHEMA = {
   portal_title:        { type: "string", max: 120, default: "ADSentinel" },
   portal_subtitle:     { type: "string", max: 240, default: "Enterprise Active Directory Security" },
-  primary_color:       { type: "color", default: "#0ea5e9" },
+  primary_color:       { type: "color", default: "#22c55e" },
   logo_url:            { type: "string", max: 500, default: "" },
   alert_email:         { type: "email", default: "" },
   slack_webhook:       { type: "url", default: "" },
@@ -58,7 +58,7 @@ function validateSetting(key, value) {
   }
 
   if (schema.type === "color") {
-    if (!/^#([A-Fa-f0-9]{6})$/.test(str)) return `${key} must be a 6-digit hex color (e.g. #0ea5e9)`;
+    if (!/^#([A-Fa-f0-9]{6})$/.test(str)) return `${key} must be a 6-digit hex color (e.g. #22c55e)`;
     return null;
   }
 

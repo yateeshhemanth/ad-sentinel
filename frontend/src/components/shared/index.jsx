@@ -127,7 +127,7 @@ export const SevBadge = ({ sev }) => {
 };
 
 // ── Button ───────────────────────────────────────────────────────────
-export const Btn = ({ children, onClick, variant = "primary", size = "md", disabled, style = {} }) => {
+export const Btn = ({ children, onClick, variant = "primary", size = "md", disabled, style = {}, ...props }) => {
   const styles = {
     primary:   { bg: T.colors.accent,        color: "#000",          border: "none"                       },
     secondary: { bg: T.colors.accentGl,      color: T.colors.accent, border: `1px solid ${T.colors.accent}44` },
@@ -138,7 +138,7 @@ export const Btn = ({ children, onClick, variant = "primary", size = "md", disab
   const sz = { sm: "4px 10px", md: "8px 18px", lg: "10px 24px" };
   const { bg, color, border } = styles[variant] || styles.primary;
   return (
-    <button onClick={onClick} disabled={disabled} style={{
+    <button onClick={onClick} disabled={disabled} {...props} style={{
       background: bg, color, border, padding: sz[size],
       borderRadius: T.radius.md, fontSize: size === "sm" ? 11 : 12, fontWeight: 600,
       cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1,

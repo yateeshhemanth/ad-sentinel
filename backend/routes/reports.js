@@ -734,7 +734,10 @@ async function generatePDF(data, filepath, type, customerName, user) {
     // ── Page 2+: Findings ──────────────────────────────────────────
     doc.addPage();
     const HDR  = ["ID","Title","Sev","Category","Affected","Risk"];
-    const COLW = [80, 185, 55, 75, 55, 35];
+    const tableWidth = doc.page.width - 88;
+    const fixedW = { id: 82, sev: 58, category: 88, affected: 58, risk: 48 };
+    const titleWidth = Math.max(140, tableWidth - (fixedW.id + fixedW.sev + fixedW.category + fixedW.affected + fixedW.risk) - 6);
+    const COLW = [fixedW.id, titleWidth, fixedW.sev, fixedW.category, fixedW.affected, fixedW.risk];
     let ty     = 68;
     let xp;
 
@@ -761,34 +764,49 @@ async function generatePDF(data, filepath, type, customerName, user) {
     });
 
     sorted.forEach((f, idx) => {
-      if (ty > 755) {
+      const rowVals = [
+        f.finding_id,
+        f.title,
+        String(f.severity || "").toUpperCase(),
+        f.category,
+        String(f.affected),
+        String(f.risk_score),
+      ];
+
+      let rowHeight = 14;
+      rowVals.forEach((val, ci) => {
+        const cellHeight = doc.heightOfString(String(val || ""), { width: COLW[ci] - 6, align: "left" });
+        rowHeight = Math.max(rowHeight, Math.min(30, Math.ceil(cellHeight) + 6));
+      });
+
+      const remediationText = f.remediation ? `  ↳ ${f.remediation}` : "";
+      const remediationHeight = remediationText
+        ? Math.min(24, Math.ceil(doc.heightOfString(remediationText, { width: doc.page.width - 110 })))
+        : 0;
+
+      const rowBlockHeight = rowHeight + (remediationHeight ? remediationHeight + 4 : 0) + 1;
+      if (ty + rowBlockHeight > 755) {
         doc.addPage();
         ty = 68;
         drawDetailHeader(ty);
         ty += 20;
       }
-      if (idx % 2 === 0) doc.rect(44, ty-3, doc.page.width-88, 16).fill("#050810");
-      xp = 50;
-      [f.finding_id, f.title, String(f.severity || "").toUpperCase(), f.category, String(f.affected), String(f.risk_score)]
-        .forEach((val, ci) => {
-          const color = ci === 2 ? (SEV_C[f.severity] || WHITE) : WHITE;
-          doc.fillColor(color).fontSize(7.5)
-             .font(ci === 2 ? "Helvetica-Bold" : "Helvetica")
-             .text(String(val || ""), xp, ty, { width: COLW[ci]-4, ellipsis: true });
-          xp += COLW[ci];
-        });
-      ty += 15;
 
-      if (f.remediation) {
-        if (ty > 755) {
-          doc.addPage();
-          ty = 68;
-          drawDetailHeader(ty);
-          ty += 20;
-        }
+      if (idx % 2 === 0) doc.rect(44, ty - 3, doc.page.width - 88, rowHeight + 2).fill("#050810");
+      xp = 50;
+      rowVals.forEach((val, ci) => {
+        const color = ci === 2 ? (SEV_C[f.severity] || WHITE) : WHITE;
+        doc.fillColor(color).fontSize(7.5)
+          .font(ci === 2 ? "Helvetica-Bold" : "Helvetica")
+          .text(String(val || ""), xp, ty, { width: COLW[ci] - 6, height: rowHeight, ellipsis: true });
+        xp += COLW[ci];
+      });
+      ty += rowHeight + 1;
+
+      if (remediationText) {
         doc.fillColor(GRAY).fontSize(7).font("Helvetica-Oblique")
-           .text(`  ↳ ${f.remediation}`, 55, ty, { width: doc.page.width-110, ellipsis: true });
-        ty += 13;
+           .text(remediationText, 55, ty, { width: doc.page.width - 110, height: remediationHeight, ellipsis: true });
+        ty += remediationHeight + 3;
       }
     });
 
