@@ -41,7 +41,7 @@ const PARAM_DEFINITIONS = [
   { key:"retentionDays",                label:"Data Retention",                  type:"number",unit:"days",     default:365,  category:"Scan",           finding:null },
 ];
 
-const BLANK_CONN = { name:"", domain:"", dc_ip:"", ldap_port:"389", bind_dn:"", bind_password:"", hr_status_url:"", hr_status_token:"" };
+const BLANK_CONN = { name:"", domain:"", dc_ip:"", ldap_port:"389", bind_dn:"", bind_password:"", hr_status_url:"", hr_status_token:"", allow_self_signed:false };
 const BLANK_USER = { name:"", email:"", password:"", role:"analyst" };
 
 const DEFAULT_NOTIFICATIONS = {
@@ -49,6 +49,10 @@ const DEFAULT_NOTIFICATIONS = {
   alertEmail:      "",
   slackEnabled:    false,
   slackWebhook:    "",
+  webhookEnabled:  false,
+  webhookUrl:      "",
+  pagerDutyEnabled:false,
+  pagerDutyRoutingKey:"",
   notifyCritical:  true,
   notifyHigh:      true,
   notifyMedium:    false,
@@ -61,6 +65,27 @@ const DEFAULT_BRANDING = {
   primary_color:   "#0ea5e9",
 };
 
+const BASE_PARAM_VALUES = Object.fromEntries(PARAM_DEFINITIONS.map(p => [p.key, p.default]));
+const CATEGORY_SUGGESTIONS = [
+  "Password", "Account", "Privilege", "GPO", "Trust", "Infrastructure", "Scan", "Custom",
+  "Domain Controllers", "Replication", "FSMO", "DNS", "Authentication", "Sysvol", "Sites & Links",
+];
+
+function parseAuditParams(raw) {
+  try {
+    if (!raw) return null;
+    const parsed = typeof raw === "string" ? JSON.parse(raw) : raw;
+    if (!parsed || typeof parsed !== "object") return null;
+    return {
+      standard: { ...BASE_PARAM_VALUES, ...(parsed.standard || {}) },
+      custom: Array.isArray(parsed.custom) ? parsed.custom : [],
+      exceptions: Array.isArray(parsed.exceptions) ? parsed.exceptions : [],
+    };
+  } catch {
+    return null;
+  }
+}
+
 export default function ConnectionManager({ logoUrl, refreshLogo, refreshBranding }) {
   const { user } = useAuth();
   const isAdmin  = user?.role === "admin";
@@ -68,8 +93,11 @@ export default function ConnectionManager({ logoUrl, refreshLogo, refreshBrandin
   const [activeTab,    setActiveTab]    = useState("connections");
   const [conns,        setConns]        = useState([]);
   const [portalUsers,  setPortalUsers]  = useState([]);
-  const [paramValues,  setParamValues]  = useState(Object.fromEntries(PARAM_DEFINITIONS.map(p=>[p.key,p.default])));
+  const [paramValues,  setParamValues]  = useState(BASE_PARAM_VALUES);
   const [customParams, setCustomParams] = useState([]);
+  const [paramScope, setParamScope] = useState("global");
+  const [globalAuditState, setGlobalAuditState] = useState(null);
+  const [exceptionText, setExceptionText] = useState("");
   const [notifications,setNotifications]= useState(DEFAULT_NOTIFICATIONS);
   const [branding,     setBranding]     = useState(DEFAULT_BRANDING);
   const [connLoad,     setConnLoad]     = useState(true);
@@ -104,14 +132,25 @@ export default function ConnectionManager({ logoUrl, refreshLogo, refreshBrandin
       if (s.audit_params) {
         try {
           const p = JSON.parse(s.audit_params);
-          if (p.standard) setParamValues(x => ({ ...x, ...p.standard }));
-          if (p.custom)   setCustomParams(p.custom);
+          const nextStandard = p.standard ? { ...BASE_PARAM_VALUES, ...p.standard } : BASE_PARAM_VALUES;
+          const nextCustom = p.custom || [];
+          setParamValues(nextStandard);
+          setCustomParams(nextCustom);
+          setExceptionText((p.exceptions || []).join("\n"));
+          setGlobalAuditState({ standard: nextStandard, custom: nextCustom, exceptions: p.exceptions || [] });
         } catch {}
       }
       // Notifications
       if (s.notifications) {
         try { setNotifications(n => ({ ...n, ...JSON.parse(s.notifications) })); } catch {}
       }
+      setNotifications(n => ({
+        ...n,
+        alertEmail: s.alert_email || n.alertEmail,
+        slackWebhook: s.slack_webhook || n.slackWebhook,
+        webhookUrl: s.webhook_url || n.webhookUrl,
+        pagerDutyRoutingKey: s.pagerduty_routing_key || n.pagerDutyRoutingKey,
+      }));
       // Branding — individual keys from settings
       setBranding(b => ({
         ...b,
@@ -121,6 +160,22 @@ export default function ConnectionManager({ logoUrl, refreshLogo, refreshBrandin
       }));
     }).catch(() => {});
   }, [isAdmin]);
+
+  useEffect(() => {
+    if (paramScope === "global") {
+      const globalCfg = globalAuditState || { standard: BASE_PARAM_VALUES, custom: [], exceptions: [] };
+      setParamValues(globalCfg.standard || BASE_PARAM_VALUES);
+      setCustomParams(globalCfg.custom || []);
+      setExceptionText((globalCfg.exceptions || []).join("\n"));
+      return;
+    }
+
+    const customer = conns.find(c => c.id === paramScope);
+    const scopedCfg = parseAuditParams(customer?.audit_params) || { standard: BASE_PARAM_VALUES, custom: [], exceptions: [] };
+    setParamValues(scopedCfg.standard || BASE_PARAM_VALUES);
+    setCustomParams(scopedCfg.custom || []);
+    setExceptionText((scopedCfg.exceptions || []).join("\n"));
+  }, [paramScope, conns, globalAuditState]);
 
   const cf = k => e => setConnForm(p => ({ ...p, [k]: e.target.value }));
   const uf = k => e => setUserForm(p => ({ ...p, [k]: e.target.value }));
@@ -133,11 +188,12 @@ export default function ConnectionManager({ logoUrl, refreshLogo, refreshBrandin
     setTesting(true); setTestResult(null);
     try {
       const result = await scanApi.testConnection({
-        dc_ip:         connForm.dc_ip,
-        ldap_port:     parseInt(connForm.ldap_port) || 389,
-        bind_dn:       connForm.bind_dn,
-        bind_password: connForm.bind_password,
-        domain:        connForm.domain,
+        dc_ip:             connForm.dc_ip,
+        ldap_port:         parseInt(connForm.ldap_port) || 389,
+        bind_dn:           connForm.bind_dn,
+        bind_password:     connForm.bind_password,
+        domain:            connForm.domain,
+        allow_self_signed: !!connForm.allow_self_signed,
       });
       setTestResult(result);
     } catch (err) {
@@ -165,7 +221,11 @@ export default function ConnectionManager({ logoUrl, refreshLogo, refreshBrandin
   const saveConn = async () => {
     setSaving(true);
     try {
-      const payload = { ...connForm, ldap_port: parseInt(connForm.ldap_port)||389 };
+      const payload = {
+        ...connForm,
+        ldap_port: parseInt(connForm.ldap_port)||389,
+        allow_self_signed: !!connForm.allow_self_signed,
+      };
       if (editingConn) {
         // UPDATE existing — always send all credential fields
         const updated = await customersApi.update(editingConn.id, payload);
@@ -193,6 +253,7 @@ export default function ConnectionManager({ logoUrl, refreshLogo, refreshBrandin
       bind_password:    "",  // never pre-fill password
       hr_status_url:    c.hr_status_url    || "",
       hr_status_token:  c.hr_status_token  || "",
+      allow_self_signed: !!c.allow_self_signed,
     });
     setTestResult(null);
     setAddConnModal(true);
@@ -224,7 +285,21 @@ export default function ConnectionManager({ logoUrl, refreshLogo, refreshBrandin
   const saveParams = async () => {
     setSaving(true);
     try {
-      await settingsApi.save({ audit_params: JSON.stringify({ standard:paramValues, custom:customParams }) });
+      const payload = {
+        standard: paramValues,
+        custom: customParams,
+        exceptions: exceptionText.split(/\\r?\\n/).map(x => x.trim()).filter(Boolean),
+      };
+
+      if (paramScope === "global") {
+        await settingsApi.save({ audit_params: JSON.stringify(payload) });
+        setGlobalAuditState(payload);
+      } else {
+        const updated = await customersApi.update(paramScope, { audit_params: payload });
+        setConns(list => list.map(c => c.id === updated.id ? updated : c));
+        setParamScope(updated.id);
+      }
+
       showSaved("✅ Audit parameters saved");
     } catch (err) { alert(err.message); }
     setSaving(false);
@@ -233,7 +308,13 @@ export default function ConnectionManager({ logoUrl, refreshLogo, refreshBrandin
   const saveNotifications = async () => {
     setSaving(true);
     try {
-      await settingsApi.save({ notifications: JSON.stringify(notifications) });
+      await settingsApi.save({
+        notifications: JSON.stringify(notifications),
+        alert_email: notifications.emailEnabled ? notifications.alertEmail : "",
+        slack_webhook: notifications.slackEnabled ? notifications.slackWebhook : "",
+        webhook_url: notifications.webhookEnabled ? notifications.webhookUrl : "",
+        pagerduty_routing_key: notifications.pagerDutyEnabled ? notifications.pagerDutyRoutingKey : "",
+      });
       showSaved("✅ Notification settings saved");
     } catch (err) { alert(err.message); }
     setSaving(false);
@@ -385,8 +466,16 @@ export default function ConnectionManager({ logoUrl, refreshLogo, refreshBrandin
             <div>
               <div style={{ fontSize:13, fontWeight:700 }}>Audit Parameters</div>
               <div style={{ fontSize:11, color:T.colors.muted, marginTop:4 }}>
-                Global thresholds applied to all scans. Every parameter maps 1:1 to a finding in the library.
+                Configure global or per-customer AD parameters. Every parameter maps 1:1 to a finding in the library.
                 {!isAdmin && <span style={{ color:T.colors.warn }}> · Read-only (admin only)</span>}
+              </div>
+              <div style={{ marginTop:10, display:"flex", gap:8, alignItems:"center" }}>
+                <span style={{ fontSize:11, color:T.colors.muted }}>Scope:</span>
+                <select value={paramScope} onChange={e => setParamScope(e.target.value)}
+                  style={{ background:T.colors.surface, border:`1px solid ${T.colors.border}`, borderRadius:6, color:T.colors.text, padding:"6px 10px", fontSize:12 }}>
+                  <option value="global">Global (all customers)</option>
+                  {conns.map(c => <option key={c.id} value={c.id}>{c.name} ({c.domain})</option>)}
+                </select>
               </div>
             </div>
             <div style={{ display:"flex", gap:10, alignItems:"center" }}>
@@ -434,6 +523,20 @@ export default function ConnectionManager({ logoUrl, refreshLogo, refreshBrandin
               </div>
             );
           })}
+
+          <div style={{ background:T.colors.card, border:`1px solid ${T.colors.border}`, borderRadius:8, padding:14, maxWidth:700 }}>
+            <div style={{ fontSize:12, fontWeight:700, marginBottom:6 }}>Exception Accounts</div>
+            <div style={{ fontSize:11, color:T.colors.muted, marginBottom:8 }}>
+              One account/computer name per line. These will be excluded from findings and reports for the selected scope.
+            </div>
+            <textarea
+              value={exceptionText}
+              disabled={!isAdmin}
+              onChange={e => setExceptionText(e.target.value)}
+              placeholder={"svc_backup\nsvc_sql\nDC01$"}
+              style={{ width:"100%", minHeight:100, background:T.colors.surface, color:T.colors.text, border:`1px solid ${T.colors.border}`, borderRadius:6, padding:10, fontFamily:T.fonts.mono, fontSize:11 }}
+            />
+          </div>
         </div>
       )}
 
@@ -613,6 +716,28 @@ export default function ConnectionManager({ logoUrl, refreshLogo, refreshBrandin
                 onChange={e=>setNotifications(n=>({...n,slackWebhook:e.target.value}))} />
             )}
 
+            <div style={{ borderTop:`1px solid ${T.colors.border}`, paddingTop:16, fontSize:12, fontWeight:700 }}>Webhook Notifications</div>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+              <span style={{ fontSize:12 }}>Enable generic webhook</span>
+              <MiniToggle value={notifications.webhookEnabled} disabled={!isAdmin} onChange={v=>setNotifications(n=>({...n,webhookEnabled:v}))} />
+            </div>
+            {notifications.webhookEnabled && (
+              <Input label="Webhook URL" placeholder="https://ops.company.com/hooks/adsentinel"
+                value={notifications.webhookUrl} disabled={!isAdmin}
+                onChange={e=>setNotifications(n=>({...n,webhookUrl:e.target.value}))} />
+            )}
+
+            <div style={{ borderTop:`1px solid ${T.colors.border}`, paddingTop:16, fontSize:12, fontWeight:700 }}>PagerDuty Notifications</div>
+            <div style={{ display:"flex", alignItems:"center", justifyContent:"space-between" }}>
+              <span style={{ fontSize:12 }}>Enable PagerDuty Events API v2</span>
+              <MiniToggle value={notifications.pagerDutyEnabled} disabled={!isAdmin} onChange={v=>setNotifications(n=>({...n,pagerDutyEnabled:v}))} />
+            </div>
+            {notifications.pagerDutyEnabled && (
+              <Input label="PagerDuty Routing Key" placeholder="xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                value={notifications.pagerDutyRoutingKey} disabled={!isAdmin}
+                onChange={e=>setNotifications(n=>({...n,pagerDutyRoutingKey:e.target.value}))} />
+            )}
+
             <div style={{ borderTop:`1px solid ${T.colors.border}`, paddingTop:16, fontSize:12, fontWeight:700 }}>Alert Thresholds</div>
             {[
               { key:"notifyCritical", label:"Notify on Critical findings" },
@@ -648,6 +773,16 @@ export default function ConnectionManager({ logoUrl, refreshLogo, refreshBrandin
             </div>
             <div style={{ gridColumn:"1/-1" }}>
               <Input label="Bind Password" type="password" placeholder="••••••••" value={connForm.bind_password} onChange={cf("bind_password")} />
+            </div>
+            <div style={{ gridColumn:"1/-1" }}>
+              <label style={{ display:"flex", gap:8, alignItems:"center", fontSize:12, color:T.colors.muted, cursor:"pointer" }}>
+                <input
+                  type="checkbox"
+                  checked={!!connForm.allow_self_signed}
+                  onChange={e => setConnForm(prev => ({ ...prev, allow_self_signed: e.target.checked }))}
+                />
+                Trust self-signed TLS certificates (LDAPS only)
+              </label>
             </div>
           </div>
 
@@ -760,10 +895,11 @@ export default function ConnectionManager({ logoUrl, refreshLogo, refreshBrandin
             </div>
             <div>
               <label style={{ fontSize:11, fontWeight:700, color:T.colors.muted, display:"block", marginBottom:6 }}>CATEGORY</label>
-              <select value={newParam.category} onChange={e=>setNewParam(p=>({...p,category:e.target.value}))}
-                style={{ width:"100%", background:T.colors.surface, border:`1px solid ${T.colors.border}`, borderRadius:6, color:T.colors.text, padding:"9px 12px", fontSize:13 }}>
-                {["Password","Account","Privilege","GPO","Trust","Infrastructure","Scan","Custom"].map(c=><option key={c}>{c}</option>)}
-              </select>
+              <input value={newParam.category} list="param-category-options" onChange={e=>setNewParam(p=>({...p,category:e.target.value}))}
+                style={{ width:"100%", background:T.colors.surface, border:`1px solid ${T.colors.border}`, borderRadius:6, color:T.colors.text, padding:"9px 12px", fontSize:13 }} />
+              <datalist id="param-category-options">
+                {[...new Set([...CATEGORY_SUGGESTIONS, ...PARAM_DEFINITIONS.map(p => p.category)])].map(c => <option key={c} value={c} />)}
+              </datalist>
             </div>
           </div>
           <div style={{ display:"grid", gridTemplateColumns:"1fr 1fr", gap:12 }}>

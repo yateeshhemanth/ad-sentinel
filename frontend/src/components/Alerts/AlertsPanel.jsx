@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from "react";
+import { useLocation } from "react-router-dom";
 import { THEME as T } from "../../constants/theme";
 import { PageHeader, Btn, Table, TR, TD, RawDataModal } from "../shared";
 import { alertsApi } from "../../utils/api";
@@ -13,6 +14,7 @@ const SEV_COLORS = {
 };
 
 export default function AlertsPanel() {
+  const location = useLocation();
   const [alerts,   setAlerts]   = useState([]);
   const [loading,  setLoading]  = useState(true);
   const [error,    setError]    = useState(null);
@@ -22,6 +24,15 @@ export default function AlertsPanel() {
   const [acking,   setAcking]   = useState(null);
   const [rawModal, setRawModal] = useState(null);
   const [expanded, setExpanded] = useState(null);
+
+  useEffect(() => {
+    const qs = new URLSearchParams(location.search || "");
+    const sev = qs.get("severity");
+    const finding = qs.get("finding");
+    if (sev && ["critical", "high", "medium", "low"].includes(sev)) setFilterSev(sev);
+    if (finding) setSearch(finding);
+    if (sev || finding) setFilterAck("all");
+  }, [location.search]);
 
   const load = () => {
     setLoading(true);
