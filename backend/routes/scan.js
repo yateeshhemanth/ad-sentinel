@@ -192,7 +192,7 @@ router.post("/password-list-scan", authenticate, requireRole("admin", "engineer"
   const matches = unique
     .map((entry) => ({ ...entry, result: isExposedPassword(entry.password) }))
     .filter((x) => x.result.ok)
-    .map((x) => ({ username: x.username || null, password: x.password, source: x.result.reason }));
+    .map((x) => ({ username: x.username || x.password, password: x.password, source: x.result.reason }));
 
   res.json({
     total_checked: unique.length,

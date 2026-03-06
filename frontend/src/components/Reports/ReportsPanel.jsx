@@ -76,8 +76,6 @@ export default function ReportsPanel() {
 
   const [passwordFile, setPasswordFile] = useState(null);
 
-
-
   const toBase64 = (file) => new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
@@ -210,7 +208,7 @@ Summer2024!"
             </div>
             <div style={{ maxHeight:140, overflow:"auto", fontSize:11, fontFamily:T.fonts.mono }}>
               {(passwordResult.matches || []).length ? passwordResult.matches.map((m, i) => (
-                <div key={i} style={{ padding:"4px 0", borderBottom:`1px dashed ${T.colors.border}` }}>{m.password} <span style={{ color:T.colors.muted }}>({m.source})</span></div>
+                <div key={i} style={{ padding:"4px 0", borderBottom:`1px dashed ${T.colors.border}` }}>{m.username ? `${m.username} : ` : ""}{m.password} <span style={{ color:T.colors.muted }}>({m.source})</span></div>
               )) : <div style={{ color:T.colors.ok }}>No exposed passwords matched.</div>}
             </div>
           </div>
