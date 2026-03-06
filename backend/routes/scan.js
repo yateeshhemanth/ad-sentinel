@@ -111,6 +111,36 @@ async function parsePasswordFileBody(body = {}) {
   return [];
 }
 
+
+function accountAliases(value) {
+  const v = String(value || "").trim().toLowerCase();
+  if (!v) return [];
+  return [...new Set([
+    v,
+    v.replace(/^.*\\/, ""),
+    v.split("@")[0],
+    v.replace(/^cn=/, "").split(",")[0],
+  ])].filter(Boolean);
+}
+
+async function loadDirectoryAccountMap(customerId) {
+  const where = customerId ? "WHERE customer_id = $1" : "";
+  const args = customerId ? [customerId] : [];
+  const { rows } = await query(
+    `SELECT sam_account_name FROM ad_users ${where} ORDER BY scanned_at DESC LIMIT 20000`,
+    args
+  );
+  const map = new Map();
+  rows.forEach((r) => {
+    const account = String(r.sam_account_name || "").trim();
+    if (!account) return;
+    accountAliases(account).forEach((a) => {
+      if (!map.has(a)) map.set(a, account);
+    });
+  });
+  return map;
+}
+
 function parseCredentialLine(line) {
   const raw = String(line || "").trim();
   if (!raw) return null;
@@ -188,16 +218,41 @@ router.post("/password-list-scan", authenticate, requireRole("admin", "engineer"
     .filter(Boolean)
     .filter((entry) => !isExcludedIdentity(entry.username, exclusionSet));
 
-  const unique = [...new Map(parsed.map((entry) => [`${entry.username.toLowerCase()}|${entry.password}`, entry])).values()];
+  const requireDirectoryUser = body.require_directory_user !== false;
+  const customerId = body.customer_id || null;
+  if (requireDirectoryUser && !customerId) {
+    return res.status(400).json({ error: "Select a customer to validate usernames against AD user directory." });
+  }
+
+  const directoryMap = requireDirectoryUser ? await loadDirectoryAccountMap(customerId) : new Map();
+
+  let directorySkipped = 0;
+  const normalized = parsed
+    .map((entry) => {
+      if (!requireDirectoryUser) return entry;
+      const aliases = accountAliases(entry.username);
+      const mapped = aliases.map((a) => directoryMap.get(a)).find(Boolean);
+      if (!mapped) {
+        directorySkipped++;
+        return null;
+      }
+      return { ...entry, username: mapped };
+    })
+    .filter(Boolean);
+
+  const unique = [...new Map(normalized.map((entry) => [`${String(entry.username || "").toLowerCase()}|${entry.password}`, entry])).values()];
   const matches = unique
     .map((entry) => ({ ...entry, result: isExposedPassword(entry.password) }))
     .filter((x) => x.result.ok)
-    .map((x) => ({ username: x.username || x.password, password: x.password, source: x.result.reason }));
+    .map((x) => ({ username: x.username || null, password: x.password, source: x.result.reason }));
 
   res.json({
     total_checked: unique.length,
     matched: matches.length,
     excluded_applied: exclusionSet.size > 0,
+    directory_enforced: requireDirectoryUser,
+    directory_accounts_loaded: directoryMap.size,
+    directory_skipped: directorySkipped,
     matches,
   });
 });
