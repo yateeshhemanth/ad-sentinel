@@ -373,6 +373,11 @@ async function fetchReportData(type, customerId, customerName) {
 async function generateCSV(data, filepath, type) {
   let columns, records;
   const f = data.findings;
+  const toCell = (value) => {
+    if (value === null || value === undefined) return "";
+    const str = String(value);
+    return /^[=+\-@]/.test(str) ? `'${str}` : str;
+  };
 
   if (type === "ad_health_dashboard") {
     const h = data.health || {};
@@ -433,9 +438,20 @@ async function generateCSV(data, filepath, type) {
   }
 
   if (!records.length) {
-    records = [["—","No data — run a scan first","","","","","","",""]];
+    const empty = new Array(columns.length).fill("");
+    empty[0] = "—";
+    if (columns.length > 1) empty[1] = "No data — run a scan first";
+    records = [empty];
   }
-  fs.writeFileSync(filepath, stringify([columns, ...records]), "utf8");
+
+  const normalized = records.map((row) => {
+    const safeRow = Array.isArray(row) ? row : [row];
+    const out = new Array(columns.length).fill("");
+    for (let i = 0; i < columns.length; i++) out[i] = toCell(safeRow[i]);
+    return out;
+  });
+
+  fs.writeFileSync(filepath, stringify([columns, ...normalized], { bom: true }), "utf8");
 }
 
 // ── PDF ────────────────────────────────────────────────────────────
@@ -602,7 +618,7 @@ async function generatePDF(data, filepath, type, customerName, user) {
       doc.fillColor("#ffffff").fontSize(14).font("Helvetica-Bold").text("Findings Detail", 50, 18);
       doc.fillColor("#dbeafe").fontSize(9).text(`${data.findings.length} finding(s) · sorted by severity`, 50, 38);
 
-      const basePortalUrl = (process.env.PORTAL_BASE_URL || process.env.FRONTEND_BASE_URL || "http://localhost:3000").replace(/\/$/, "");
+      const basePortalUrl = (process.env.FRONTEND_URL || process.env.PORTAL_BASE_URL || process.env.FRONTEND_BASE_URL || "http://localhost:3000").replace(/\/$/, "");
       const buildRefLink = (finding) => {
         const qs = new URLSearchParams();
         qs.set("finding", finding.finding_id || "");
@@ -717,22 +733,25 @@ async function generatePDF(data, filepath, type, customerName, user) {
 
     // ── Page 2+: Findings ──────────────────────────────────────────
     doc.addPage();
-    doc.rect(0, 0, doc.page.width, 54).fill(DARK);
-    doc.fillColor(BLUE).fontSize(14).font("Helvetica-Bold").text("FINDINGS DETAIL", 50, 18);
-    doc.fillColor(GRAY).fontSize(9)
-       .text(`${data.findings.length} finding(s) · sorted by risk`, 50, 38);
-
     const HDR  = ["ID","Title","Sev","Category","Affected","Risk"];
     const COLW = [80, 185, 55, 75, 55, 35];
     let ty     = 68;
     let xp;
 
-    doc.rect(44, ty-5, doc.page.width-88, 19).fill("#0f1629");
-    xp = 50;
-    HDR.forEach((h, i) => {
-      doc.fillColor(GRAY).fontSize(8).font("Helvetica-Bold").text(h, xp, ty);
-      xp += COLW[i];
-    });
+    const drawDetailHeader = (yPos) => {
+      doc.rect(0, 0, doc.page.width, 54).fill(DARK);
+      doc.fillColor(BLUE).fontSize(14).font("Helvetica-Bold").text("FINDINGS DETAIL", 50, 18);
+      doc.fillColor(GRAY).fontSize(9)
+         .text(`${data.findings.length} finding(s) · sorted by risk`, 50, 38);
+      doc.rect(44, yPos-5, doc.page.width-88, 19).fill("#0f1629");
+      xp = 50;
+      HDR.forEach((h, i) => {
+        doc.fillColor(GRAY).fontSize(8).font("Helvetica-Bold").text(h, xp, yPos);
+        xp += COLW[i];
+      });
+    };
+
+    drawDetailHeader(ty);
     ty += 20;
 
     const SEV_C = { critical:RED, high:AMBER, medium:BLUE, low:GRAY };
@@ -742,21 +761,31 @@ async function generatePDF(data, filepath, type, customerName, user) {
     });
 
     sorted.forEach((f, idx) => {
-      if (ty > 755) { doc.addPage(); ty = 50; }
+      if (ty > 755) {
+        doc.addPage();
+        ty = 68;
+        drawDetailHeader(ty);
+        ty += 20;
+      }
       if (idx % 2 === 0) doc.rect(44, ty-3, doc.page.width-88, 16).fill("#050810");
       xp = 50;
-      [f.finding_id, f.title, f.severity.toUpperCase(), f.category, String(f.affected), String(f.risk_score)]
+      [f.finding_id, f.title, String(f.severity || "").toUpperCase(), f.category, String(f.affected), String(f.risk_score)]
         .forEach((val, ci) => {
           const color = ci === 2 ? (SEV_C[f.severity] || WHITE) : WHITE;
           doc.fillColor(color).fontSize(7.5)
              .font(ci === 2 ? "Helvetica-Bold" : "Helvetica")
-             .text(val, xp, ty, { width: COLW[ci]-4, ellipsis: true });
+             .text(String(val || ""), xp, ty, { width: COLW[ci]-4, ellipsis: true });
           xp += COLW[ci];
         });
       ty += 15;
 
       if (f.remediation) {
-        if (ty > 755) { doc.addPage(); ty = 50; }
+        if (ty > 755) {
+          doc.addPage();
+          ty = 68;
+          drawDetailHeader(ty);
+          ty += 20;
+        }
         doc.fillColor(GRAY).fontSize(7).font("Helvetica-Oblique")
            .text(`  ↳ ${f.remediation}`, 55, ty, { width: doc.page.width-110, ellipsis: true });
         ty += 13;
