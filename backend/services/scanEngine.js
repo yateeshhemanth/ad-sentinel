@@ -331,7 +331,35 @@ function normalizeAuditParams(globalParams, customer) {
 function getExclusionSet(auditParams) {
   const list = auditParams?.exceptions || auditParams?.excluded_accounts || [];
   const arr = Array.isArray(list) ? list : [];
-  return new Set(arr.map(x => String(x || "").toLowerCase()).filter(Boolean));
+  const out = new Set();
+  arr.forEach((x) => {
+    const raw = String(x || "").trim();
+    if (!raw) return;
+    const lower = raw.toLowerCase();
+    out.add(lower);
+    out.add(lower.replace(/^.*\\/, "")); // DOMAIN\user -> user
+    out.add(lower.split("@")[0]);         // user@domain -> user
+    out.add(lower.replace(/^cn=/, "").split(",")[0]); // CN=user,... -> user
+  });
+  return out;
+}
+
+function getAccountAliases(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return [];
+  const lower = raw.toLowerCase();
+  const aliases = new Set([
+    lower,
+    lower.replace(/^.*\\/, ""),
+    lower.split("@")[0],
+    lower.replace(/^cn=/, "").split(",")[0],
+  ]);
+  return [...aliases].filter(Boolean);
+}
+
+function isExcludedAccount(value, exclusionSet) {
+  const aliases = getAccountAliases(value);
+  return aliases.some((a) => exclusionSet.has(a));
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -444,10 +472,11 @@ async function runFindingChecks(client, dcDN, auditParams, exclusionSet = new Se
         })
         .filter(Boolean);
 
-      const affectedUsers = rawAffectedUsers
-        .filter(u => !exclusionSet.has(String(u).toLowerCase()))
-        .slice(0, 50);
-      const effectiveCount = rawAffectedUsers.filter(u => !exclusionSet.has(String(u).toLowerCase())).length || entries.length;
+      const includedUsers = rawAffectedUsers.filter(u => !isExcludedAccount(u, exclusionSet));
+      const affectedUsers = includedUsers.slice(0, 50);
+      const effectiveCount = includedUsers.length;
+
+      if (!effectiveCount) continue;
 
       results.push({
         finding_id:         finding.id,
@@ -613,6 +642,13 @@ async function runScan(customerId) {
             existing[0].id,
           ]
         );
+        await createAutoTicketForAlert({
+          alertId: existing[0].id,
+          customerId,
+          customerName: customer.name,
+          finding: f,
+        }).catch((e) => logger.warn("Auto-ticket creation failed: " + e.message));
+
         skipped++;
         continue;
       }
