@@ -1,18 +1,21 @@
 import { useState, useEffect, useMemo } from "react";
+import { useLocation } from "react-router-dom";
 import { THEME as T } from "../../constants/theme";
 import { PageHeader, Btn, Table, TR, TD, RawDataModal } from "../shared";
 import { alertsApi } from "../../utils/api";
 import { exportCSV } from "../../utils/exportUtils";
 
 const SEV_ORDER  = { critical:0, high:1, medium:2, low:3 };
+const UI_MUTED_ACCESSIBLE = "#94a3b8";
 const SEV_COLORS = {
   critical:{ bg:"rgba(239,68,68,0.12)",  text:"#ef4444" },
-  high:    { bg:"rgba(245,158,11,0.12)", text:"#f59e0b" },
+  high:    { bg:"rgba(245,158,11,0.16)", text:"#fbbf24" },
   medium:  { bg:"rgba(14,165,233,0.12)", text:"#0ea5e9" },
   low:     { bg:"rgba(167,139,250,0.12)",text:"#a78bfa" },
 };
 
 export default function AlertsPanel() {
+  const location = useLocation();
   const [alerts,   setAlerts]   = useState([]);
   const [loading,  setLoading]  = useState(true);
   const [error,    setError]    = useState(null);
@@ -22,6 +25,15 @@ export default function AlertsPanel() {
   const [acking,   setAcking]   = useState(null);
   const [rawModal, setRawModal] = useState(null);
   const [expanded, setExpanded] = useState(null);
+
+  useEffect(() => {
+    const qs = new URLSearchParams(location.search || "");
+    const sev = qs.get("severity");
+    const finding = qs.get("finding");
+    if (sev && ["critical", "high", "medium", "low"].includes(sev)) setFilterSev(sev);
+    if (finding) setSearch(finding);
+    if (sev || finding) setFilterAck("all");
+  }, [location.search]);
 
   const load = () => {
     setLoading(true);
@@ -119,13 +131,13 @@ export default function AlertsPanel() {
               cursor:"pointer", transition:"border-color 0.15s", borderTop:`2px solid ${color}` }}
             onMouseEnter={e => e.currentTarget.style.borderColor = color}
             onMouseLeave={e => e.currentTarget.style.borderTop   = `2px solid ${color}`}>
-            <div style={{ fontSize:9, fontWeight:700, color:T.colors.muted, letterSpacing:"0.05em", marginBottom:6 }}>
+            <div style={{ fontSize:9, fontWeight:700, color:UI_MUTED_ACCESSIBLE, letterSpacing:"0.05em", marginBottom:6 }}>
               {label.toUpperCase()}
             </div>
             <div style={{ fontSize:26, fontWeight:700, color, fontFamily:T.fonts.mono, lineHeight:1 }}>
               {stats[sev]}
             </div>
-            <div style={{ fontSize:10, color:T.colors.muted, marginTop:4 }}>
+            <div style={{ fontSize:10, color:UI_MUTED_ACCESSIBLE, marginTop:4 }}>
               {stats[sev] > 0 ? "VIEW ACCOUNTS ›" : "no alerts"}
             </div>
           </div>
@@ -160,7 +172,7 @@ export default function AlertsPanel() {
         <input value={search} onChange={e => setSearch(e.target.value)} placeholder="🔍  Search alerts…"
           style={{ flex:1, minWidth:200, background:T.colors.surface, border:`1px solid ${T.colors.border}`,
             borderRadius:6, color:T.colors.text, padding:"7px 12px", fontSize:12 }} />
-        <span style={{ fontSize:11, color:T.colors.muted }}>{visible.length} alert{visible.length!==1?"s":""}</span>
+        <span style={{ fontSize:11, color:UI_MUTED_ACCESSIBLE }}>{visible.length} alert{visible.length!==1?"s":""}</span>
       </div>
 
       {error && <div style={{ background:"rgba(239,68,68,0.08)", border:`1px solid #ef444444`, borderRadius:6, padding:"10px 14px", fontSize:12, color:"#ef4444" }}>{error}</div>}

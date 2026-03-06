@@ -40,7 +40,8 @@ function AppShell({ children, alertCount }) {
       }}>
         <span>● Multi-Tenant AD Portal</span>
         <span>● ADSentinel Enterprise v2.0</span>
-        <span style={{ marginLeft: "auto" }}>© 2025 ADSentinel</span>
+        <span>● Secure Multi-Tenant AD Auditing</span>
+        <span style={{ marginLeft: "auto" }}>© 2026 CTRLS DATACENTES LTD</span>
       </div>
     </div>
   );

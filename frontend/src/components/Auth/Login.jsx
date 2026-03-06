@@ -105,7 +105,7 @@ export default function Login() {
         </div>
 
         <div style={{ textAlign: "center", marginTop: 16, fontSize: 11, color: T.colors.muted }}>
-          ADSentinel Enterprise v2.0 · Secure Multi-Tenant AD Auditing
+          ADSentinel Enterprise v2.0 · © 2026 CTRLS DATACENTES LTD
         </div>
       </div>
     </div>

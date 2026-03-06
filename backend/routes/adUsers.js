@@ -124,6 +124,12 @@ router.get("/stats", authenticate, async (req, res) => {
       .slice(0, 8)
       .map(([name, count]) => ({ name, count }));
 
+    const privilegedTargets = ["Domain Admins", "Enterprise Admins", "Schema Admins", "Administrators"];
+    const privilegedGroups = privilegedTargets.map(name => ({
+      name,
+      count: groupCounts[name] || 0,
+    }));
+
     // Last scan time
     const { rows: scanRow } = await query(
       `SELECT MAX(scanned_at) AS last_scan FROM ad_users ${whereClause}`, params
@@ -133,6 +139,7 @@ router.get("/stats", authenticate, async (req, res) => {
       ...Object.fromEntries(Object.entries(stats).map(([k,v]) => [k, parseInt(v)||0])),
       departments: depts.map(d => ({ name: d.department, count: parseInt(d.count) })),
       top_groups:  topGroups,
+      privileged_groups: privilegedGroups,
       last_scan:   scanRow[0]?.last_scan || null,
       no_data:     parseInt(stats.total) === 0,
     });
