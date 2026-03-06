@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { THEME as T, SCORE_COLOR } from "../../constants/theme";
 import { GlowCircle, MetricCard, Btn, Modal, Input, Table, TR, TD, RawDataModal } from "../shared";
-import { alertsApi, scanApi, settingsApi, customersApi } from "../../utils/api";
+import { alertsApi, scanApi, settingsApi, customersApi, reportsApi, downloadReport } from "../../utils/api";
 import ADUsersDashboard from "../Users/ADUsersDashboard";
 import { useAuth } from "../../context/AuthContext";
 
@@ -78,6 +78,7 @@ export default function CustomerAudit({ customer, onBack }) {
 
   // Raw data modals — one per card
   const [rawModal, setRawModal] = useState(null); // { title, headers, rows, color }
+  const [reportBusy, setReportBusy] = useState(null);
 
   const openRaw = (title, color, headers, rows) =>
     setRawModal({ title, color, headers, rows });
@@ -116,6 +117,25 @@ export default function CustomerAudit({ customer, onBack }) {
       setParamSaved(true); setTimeout(()=>setParamSaved(false),3000);
     } catch(e){ alert(e.message); }
     setSavingParams(false);
+  };
+
+  const generateReport = async (type, format) => {
+    const k = `${type}_${format}`;
+    setReportBusy(k);
+    try {
+      const result = await reportsApi.generate({
+        type,
+        format,
+        customer_id: customer.id,
+        customer_name: customer.name,
+      });
+      if (result?.download_url) {
+        await downloadReport(result.download_url, result.filename || `${type}.${format}`);
+      }
+    } catch (e) {
+      alert(`Report download failed: ${e.message}`);
+    }
+    setReportBusy(null);
   };
 
   const addCustomParam = () => {
@@ -481,26 +501,30 @@ export default function CustomerAudit({ customer, onBack }) {
       {!loading && tab==="reports" && (
         <div style={{ display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(260px,1fr))", gap:12 }}>
           {[
-            {title:"Executive Summary",       icon:"📊", color:T.colors.accent},
-            {title:"Password Vulnerabilities",icon:"🔐", color:T.colors.danger},
-            {title:"Policy Compliance",       icon:"📋", color:T.colors.warn  },
-            {title:"Privileged Accounts",     icon:"👑", color:T.colors.warn  },
-            {title:"Compliance Mapping",      icon:"🗂️", color:T.colors.accent},
-            {title:"Kerberos Attack Surface", icon:"🎫", color:T.colors.danger},
-          ].map(r=>(
-            <div key={r.title} style={{ background:T.colors.card, border:`1px solid ${T.colors.border}`, borderRadius:8, padding:18, display:"flex", gap:14, transition:"border-color 0.2s" }}
-              onMouseEnter={e=>e.currentTarget.style.borderColor=r.color}
-              onMouseLeave={e=>e.currentTarget.style.borderColor=T.colors.border}>
-              <span style={{ fontSize:24 }}>{r.icon}</span>
-              <div style={{ flex:1 }}>
-                <div style={{ fontWeight:700, fontSize:13, marginBottom:10 }}>{r.title}</div>
-                <div style={{ display:"flex", gap:8 }}>
-                  <Btn variant="danger" size="sm">⬇ PDF</Btn>
-                  <Btn variant="secondary" size="sm">⬇ CSV</Btn>
+            { type:"executive_summary", title:"Executive Summary",        icon:"📊", color:T.colors.accent },
+            { type:"password_vulnerability", title:"Password Vulnerabilities", icon:"🔐", color:T.colors.danger },
+            { type:"policy_compliance", title:"Policy Compliance",        icon:"📋", color:T.colors.warn },
+            { type:"privileged_accounts", title:"Privileged Accounts",      icon:"👑", color:T.colors.warn },
+            { type:"compliance_mapping", title:"Compliance Mapping",       icon:"🗂️", color:T.colors.accent },
+            { type:"kerberos_risks", title:"Kerberos Attack Surface",  icon:"🎫", color:T.colors.danger },
+          ].map(r=>{
+            const pdfKey = `${r.type}_pdf`;
+            const csvKey = `${r.type}_csv`;
+            return (
+              <div key={r.title} style={{ background:T.colors.card, border:`1px solid ${T.colors.border}`, borderRadius:8, padding:18, display:"flex", gap:14, transition:"border-color 0.2s" }}
+                onMouseEnter={e=>e.currentTarget.style.borderColor=r.color}
+                onMouseLeave={e=>e.currentTarget.style.borderColor=T.colors.border}>
+                <span style={{ fontSize:24 }}>{r.icon}</span>
+                <div style={{ flex:1 }}>
+                  <div style={{ fontWeight:700, fontSize:13, marginBottom:10 }}>{r.title}</div>
+                  <div style={{ display:"flex", gap:8 }}>
+                    <Btn variant="danger" size="sm" disabled={!!reportBusy} onClick={()=>generateReport(r.type, "pdf")}>{reportBusy===pdfKey?"Generating…":"⬇ PDF"}</Btn>
+                    <Btn variant="secondary" size="sm" disabled={!!reportBusy} onClick={()=>generateReport(r.type, "csv")}>{reportBusy===csvKey?"Generating…":"⬇ CSV"}</Btn>
+                  </div>
                 </div>
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 

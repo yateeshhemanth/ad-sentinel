@@ -36,7 +36,7 @@ router.post("/", authenticate, requireRole("admin"), upload.single("logo"), asyn
   // Remove old logo file
   const { rows } = await query("SELECT value FROM app_settings WHERE key = 'logo_url'");
   if (rows[0]?.value) {
-    const oldPath = path.join(__dirname, "..", rows[0].value);
+    const oldPath = path.join(__dirname, "..", String(rows[0].value || "").replace(/^\//, ""));
     if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
   }
 
@@ -53,7 +53,7 @@ router.post("/", authenticate, requireRole("admin"), upload.single("logo"), asyn
 router.delete("/", authenticate, requireRole("admin"), async (req, res) => {
   const { rows } = await query("SELECT value FROM app_settings WHERE key = 'logo_url'");
   if (rows[0]?.value) {
-    const filePath = path.join(__dirname, "..", rows[0].value);
+    const filePath = path.join(__dirname, "..", String(rows[0].value || "").replace(/^\//, ""));
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
   }
   await query("DELETE FROM app_settings WHERE key = 'logo_url'");

@@ -21,7 +21,7 @@ const request = async (method, path, body, options = {}) => {
     localStorage.removeItem("ads_token");
     localStorage.removeItem("ads_user");
     window.location.href = "/login";
-    return;
+    throw new Error("Unauthorized");
   }
 
   const data = await res.json().catch(() => ({}));
@@ -36,6 +36,12 @@ const upload = async (path, formData) => {
     headers: { Authorization: `Bearer ${getToken()}` },
     body: formData,
   });
+  if (res.status === 401) {
+    localStorage.removeItem("ads_token");
+    localStorage.removeItem("ads_user");
+    window.location.href = "/login";
+    throw new Error("Unauthorized");
+  }
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || "Upload failed");
   return data;
@@ -64,11 +70,13 @@ export const authApi = {
 };
 
 export const customersApi = {
-  list:    ()         => api.get("/customers"),
-  create:  (body)     => api.post("/customers", body),
-  update:  (id, body) => api.patch(`/customers/${id}`, body),
-  remove:  (id)       => api.delete(`/customers/${id}`),
-  posture: (id)       => api.get(`/customers/${id}/posture`),
+  list:     ()         => api.get("/customers"),
+  template: ()         => api.get("/customers/template"),
+  create:   (body)     => api.post("/customers", body),
+  bulk:     (body)     => api.post("/customers/bulk", body),
+  update:   (id, body) => api.patch(`/customers/${id}`, body),
+  remove:   (id)       => api.delete(`/customers/${id}`),
+  posture:  (id)       => api.get(`/customers/${id}/posture`),
 };
 
 export const alertsApi = {
@@ -107,11 +115,13 @@ export const scanApi = {
   testConnection: (body)       => api.post('/scan/test-connection', body),
   library:        (params)     => api.get('/scan/library', params),
   libraryStats:   ()           => api.get('/scan/library/stats'),
+  passwordListScan:(body)      => api.post('/scan/password-list-scan', body),
 };
 
 export const settingsApi = {
-  get:   ()     => api.get('/settings'),
-  save:  (body) => api.put('/settings', body),
+  get:    ()     => api.get('/settings'),
+  schema: ()     => api.get('/settings/schema'),
+  save:   (body) => api.put('/settings', body),
 };
 
 export const usersApi = {
@@ -177,4 +187,10 @@ export const offboardingApi = {
   overview:       ()           => api.get("/offboarding/overview"),
   apiContract:    ()           => api.get("/offboarding/api-contract"),
   testUrl:        (body)       => api.post("/offboarding/test-url", body),
+};
+
+
+export const inventoryApi = {
+  snapshots: (params) => api.get("/inventory/snapshots", params),
+  objects:   (params) => api.get("/inventory/objects", params),
 };

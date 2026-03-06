@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, useCallback } from "react";
-import { authApi, settingsApi, logoApi } from "../utils/api";
+import { authApi, settingsApi } from "../utils/api";
+import { resolveAssetUrl } from "../utils/assetUrl";
 
 const AuthContext = createContext(null);
 
@@ -18,14 +19,14 @@ export const AuthProvider = ({ children }) => {
   const [logoUrl,       setLogoUrl]       = useState(null);
   const [portalTitle,   setPortalTitle]   = useState("ADSentinel");
   const [portalSubtitle,setPortalSubtitle]= useState("Enterprise Active Directory Security");
-  const [primaryColor,  setPrimaryColor]  = useState("#0ea5e9");
+  const [primaryColor,  setPrimaryColor]  = useState("#22c55e");
   const [loading,       setLoading]       = useState(true);
 
   const applyAndStore = useCallback((data) => {
-    setLogoUrl(data.logoUrl || null);
+    setLogoUrl(resolveAssetUrl(data.logoUrl) || null);
     setPortalTitle(data.portalTitle || "ADSentinel");
     setPortalSubtitle(data.portalSubtitle || "Enterprise Active Directory Security");
-    setPrimaryColor(data.primaryColor || "#0ea5e9");
+    setPrimaryColor(data.primaryColor || "#22c55e");
     applyBranding(data);
   }, []);
 
@@ -61,17 +62,17 @@ export const AuthProvider = ({ children }) => {
   }, []);
 
   // Called after logo upload/remove
-  const refreshLogo = useCallback((url) => setLogoUrl(url), []);
+  const refreshLogo = useCallback((url) => setLogoUrl(resolveAssetUrl(url) || null), []);
 
   // Called after branding save in Settings — re-fetches all settings and re-applies
   const refreshBranding = useCallback(async () => {
     try {
       const s = await settingsApi.get();
       const branding = {
-        logoUrl:        s.logo_url        || logoUrl,
+        logoUrl:        resolveAssetUrl(s.logo_url) || logoUrl,
         portalTitle:    s.portal_title    || "ADSentinel",
         portalSubtitle: s.portal_subtitle || "Enterprise Active Directory Security",
-        primaryColor:   s.primary_color   || "#0ea5e9",
+        primaryColor:   s.primary_color   || "#22c55e",
       };
       applyAndStore(branding);
     } catch {}

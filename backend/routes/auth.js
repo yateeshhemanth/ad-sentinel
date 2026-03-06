@@ -82,7 +82,7 @@ router.get("/me", authenticate, async (req, res) => {
       logoUrl:       s.logo_url       || null,
       portalTitle:   s.portal_title   || "ADSentinel",
       portalSubtitle:s.portal_subtitle|| "Enterprise Active Directory Security",
-      primaryColor:  s.primary_color  || "#0ea5e9",
+      primaryColor:  s.primary_color  || "#22c55e",
     });
   } catch (err) {
     logger.error("GET /me error:", err);
@@ -171,16 +171,32 @@ router.post("/reset-password", [
 // ── POST /api/auth/change-password (authenticated) ────────────────
 router.post("/change-password", authenticate, [
   body("currentPassword").notEmpty(),
-  body("newPassword").isLength({ min: 8 }),
+  body("newPassword")
+    .isLength({ min: 8 })
+    .matches(/^(?=.*[A-Z])(?=.*[0-9])(?=.*[!@#$%^&*])/)
+    .withMessage("New password must include uppercase, number, and special character")
+    .custom((value, { req }) => value !== req.body.currentPassword)
+    .withMessage("New password must differ from current password"),
 ], async (req, res) => {
-  const { currentPassword, newPassword } = req.body;
-  const { rows } = await query("SELECT password_hash FROM users WHERE id = $1", [req.user.id]);
-  const valid = await bcrypt.compare(currentPassword, rows[0].password_hash);
-  if (!valid) return res.status(400).json({ error: "Current password is incorrect" });
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return res.status(400).json({ errors: errors.array() });
 
-  const hash = await bcrypt.hash(newPassword, 12);
-  await query("UPDATE users SET password_hash = $1 WHERE id = $2", [hash, req.user.id]);
-  res.json({ message: "Password changed successfully" });
+  const { currentPassword, newPassword } = req.body;
+
+  try {
+    const { rows } = await query("SELECT password_hash FROM users WHERE id = $1", [req.user.id]);
+    if (!rows.length) return res.status(404).json({ error: "User not found" });
+
+    const valid = await bcrypt.compare(currentPassword, rows[0].password_hash);
+    if (!valid) return res.status(400).json({ error: "Current password is incorrect" });
+
+    const hash = await bcrypt.hash(newPassword, 12);
+    await query("UPDATE users SET password_hash = $1 WHERE id = $2", [hash, req.user.id]);
+    res.json({ message: "Password changed successfully" });
+  } catch (err) {
+    logger.error("Change password error:", err);
+    res.status(500).json({ error: "Failed to change password" });
+  }
 });
 
 // ── Helpers ────────────────────────────────────────────────────────
@@ -196,9 +212,9 @@ async function sendResetEmail(to, resetUrl) {
     subject: "ADSentinel — Password Reset Request",
     html: `
       <div style="font-family:sans-serif;max-width:500px;margin:auto">
-        <h2 style="color:#0ea5e9">ADSentinel Password Reset</h2>
+        <h2 style="color:#22c55e">ADSentinel Password Reset</h2>
         <p>You requested a password reset. Click below within 1 hour:</p>
-        <a href="${resetUrl}" style="display:inline-block;background:#0ea5e9;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold">Reset Password</a>
+        <a href="${resetUrl}" style="display:inline-block;background:#22c55e;color:#fff;padding:12px 24px;border-radius:6px;text-decoration:none;font-weight:bold">Reset Password</a>
         <p style="color:#888;font-size:12px;margin-top:24px">If you didn't request this, ignore this email.</p>
       </div>
     `,

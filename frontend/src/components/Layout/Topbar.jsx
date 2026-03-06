@@ -38,8 +38,11 @@ export default function Topbar({ alertCount = 0 }) {
     try {
       const { logoUrl: url } = await logoApi.upload(file);
       refreshLogo(url);
+    } catch (_) {
+      // keep topbar non-blocking; settings page shows full upload errors
     } finally {
       setUploading(false);
+      e.target.value = "";
     }
   };
 
