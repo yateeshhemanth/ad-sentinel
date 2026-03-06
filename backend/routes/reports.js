@@ -239,6 +239,7 @@ async function fetchReportData(type, customerId, customerName) {
 
   const base = {
     reportType:   type,
+    customerId:   customerId || null,
     customerName: customer?.name || customerName || "All Customers",
     domain:       customer?.domain || "—",
     generatedAt:  new Date().toISOString(),
@@ -601,31 +602,56 @@ async function generatePDF(data, filepath, type, customerName, user) {
       doc.fillColor("#ffffff").fontSize(14).font("Helvetica-Bold").text("Findings Detail", 50, 18);
       doc.fillColor("#dbeafe").fontSize(9).text(`${data.findings.length} finding(s) · sorted by severity`, 50, 38);
 
-      const HDR = ["ID", "Title", "Severity", "Category", "Affected"];
-      const COLW = [80, 230, 80, 80, 50];
+      const basePortalUrl = (process.env.PORTAL_BASE_URL || process.env.FRONTEND_BASE_URL || "http://localhost:3000").replace(/\/$/, "");
+      const buildRefLink = (finding) => {
+        const qs = new URLSearchParams();
+        qs.set("finding", finding.finding_id || "");
+        if (data.customerId) qs.set("customer_id", data.customerId);
+        if (finding.severity) qs.set("severity", finding.severity);
+        return `${basePortalUrl}/alerts?${qs.toString()}`;
+      };
+
+      const HDR = ["ID", "Title", "Severity", "Category", "Affected", "Ref"];
+      const COLW = [75, 210, 70, 70, 45, 35];
+
+      const drawFindingsHeader = (yPos) => {
+        doc.rect(44, yPos - 5, doc.page.width - 88, 19).fill("#5b6fd6");
+        x = 50;
+        HDR.forEach((h, i) => {
+          doc.fillColor("#ffffff").fontSize(8).font("Helvetica-Bold").text(h, x, yPos);
+          x += COLW[i];
+        });
+      };
+
       let ty = 68;
-      doc.rect(44, ty - 5, doc.page.width - 88, 19).fill("#5b6fd6");
-      x = 50;
-      HDR.forEach((h, i) => {
-        doc.fillColor("#ffffff").fontSize(8).font("Helvetica-Bold").text(h, x, ty);
-        x += COLW[i];
-      });
+      drawFindingsHeader(ty);
       ty += 20;
 
       const sevOrder = { critical: 0, high: 1, medium: 2, low: 3 };
       const sevColor = { critical: "#b91c1c", high: "#b45309", medium: "#1d4ed8", low: "#475569" };
       const sorted = [...data.findings].sort((a, b) => (sevOrder[a.severity] ?? 9) - (sevOrder[b.severity] ?? 9));
       sorted.forEach((f, idx) => {
-        if (ty > 760) { doc.addPage(); ty = 50; }
+        if (ty > 760) {
+          doc.addPage();
+          doc.rect(0, 0, doc.page.width, doc.page.height).fill("#eef1f7");
+          doc.rect(0, 0, doc.page.width, 54).fill("#5b6fd6");
+          doc.fillColor("#ffffff").fontSize(13).font("Helvetica-Bold").text("Findings Detail (cont.)", 50, 18);
+          ty = 68;
+          drawFindingsHeader(ty);
+          ty += 20;
+        }
         doc.rect(44, ty - 3, doc.page.width - 88, 16).fill(idx % 2 === 0 ? "#ffffff" : "#f5f7fb");
         x = 50;
-        [f.finding_id, f.title, f.severity.toUpperCase(), f.category, String(f.affected)].forEach((val, ci) => {
+        [f.finding_id, f.title, String(f.severity || "").toUpperCase(), f.category, String(f.affected)].forEach((val, ci) => {
           doc.fillColor(ci === 2 ? (sevColor[f.severity] || "#0f172a") : "#0f172a")
-            .fontSize(7.4)
-            .font(ci === 2 ? "Helvetica-Bold" : "Helvetica")
-            .text(String(val), x, ty, { width: COLW[ci] - 4, ellipsis: true });
+             .fontSize(7.2)
+             .font(ci === 2 ? "Helvetica-Bold" : "Helvetica")
+             .text(String(val), x, ty, { width: COLW[ci] - 4, ellipsis: true });
           x += COLW[ci];
         });
+        const link = buildRefLink(f);
+        doc.fillColor("#2563eb").fontSize(7.2).font("Helvetica-Bold")
+           .text("Open", x, ty, { width: COLW[5] - 4, link, underline: true });
         ty += 15;
       });
 
