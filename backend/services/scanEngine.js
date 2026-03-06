@@ -134,10 +134,14 @@ async function createAutoTicketForAlert({ alertId, customerId, customerName, fin
 
   const priority = finding.severity === "critical" ? "critical" : finding.severity === "high" ? "high" : "medium";
   const title = `[${finding.finding_id}] ${finding.title}`;
+  const tags = [finding.finding_id, finding.category, finding.severity].filter(Boolean);
+  const affectedUsers = Array.isArray(finding.affected_users) ? finding.affected_users.filter(Boolean) : [];
   const description = [
     `Auto-created from scan finding ${finding.finding_id}.`,
+    `Tags: ${tags.map(t => `#${String(t).replace(/[^a-z0-9_-]/ig, "_")}`).join(" ")}`,
     `Severity: ${finding.severity}`,
     `Affected accounts: ${finding.affected_count}`,
+    affectedUsers.length ? `Affected users: ${affectedUsers.join(", ")}` : "",
     finding.remediation ? `Remediation: ${finding.remediation}` : "",
   ].filter(Boolean).join("\n");
   const { rows } = await query(

@@ -1,9 +1,13 @@
 const express = require("express");
 const ldap    = require("ldapjs");
 const dns     = require("dns").promises;
+const path    = require("path");
+const XLSX    = require("xlsx");
+const pdfParse = require("pdf-parse");
 const { authenticate, requireRole } = require("../middleware/auth");
 const { runScan, getLibrary, reloadLibrary, getLibraryStats } = require("../services/scanEngine");
 const { decrypt } = require("../config/crypto");
+const { query } = require("../config/db");
 const logger = require("../config/logger");
 
 const router = express.Router();
@@ -69,25 +73,186 @@ function isExposedPassword(pwd) {
 
 function parsePasswordList(body) {
   if (Array.isArray(body.passwords)) return body.passwords.map(String).map(s => s.trim()).filter(Boolean);
-  if (typeof body.passwords_text === "string") return body.passwords_text.split(/[\r\n,;]+/).map(s => s.trim()).filter(Boolean);
+  if (typeof body.passwords_text === "string") return body.passwords_text.split(/[\r\n]+/).map(s => s.trim()).filter(Boolean);
   return [];
+}
+
+async function parsePasswordFileBody(body = {}) {
+  if (!body.file_content_base64) return [];
+  const filename = String(body.file_name || "upload.txt");
+  const ext = path.extname(filename).toLowerCase();
+  const mime = String(body.file_mime || "").toLowerCase();
+  const buffer = Buffer.from(String(body.file_content_base64), "base64");
+
+  if (!buffer.length) return [];
+
+  if ([".txt", ".log", ".csv"].includes(ext) || mime.includes("text") || mime.includes("csv")) {
+    return buffer.toString("utf8").split(/[\r\n]+/).map(s => s.trim()).filter(Boolean);
+  }
+
+  if ([".xls", ".xlsx"].includes(ext) || mime.includes("spreadsheet") || mime.includes("excel")) {
+    const wb = XLSX.read(buffer, { type: "buffer" });
+    const lines = [];
+    wb.SheetNames.forEach((name) => {
+      const rows = XLSX.utils.sheet_to_json(wb.Sheets[name], { header: 1, blankrows: false });
+      rows.forEach((row) => {
+        const joined = (row || []).map((cell) => String(cell ?? "").trim()).filter(Boolean).join(",");
+        if (joined) lines.push(joined);
+      });
+    });
+    return lines;
+  }
+
+  if (ext === ".pdf" || mime.includes("pdf")) {
+    const parsed = await pdfParse(buffer);
+    return String(parsed.text || "").split(/[\r\n]+/).map(s => s.trim()).filter(Boolean);
+  }
+
+  return [];
+}
+
+
+function accountAliases(value) {
+  const v = String(value || "").trim().toLowerCase();
+  if (!v) return [];
+  return [...new Set([
+    v,
+    v.replace(/^.*\\/, ""),
+    v.split("@")[0],
+    v.replace(/^cn=/, "").split(",")[0],
+  ])].filter(Boolean);
+}
+
+async function loadDirectoryAccountMap(customerId) {
+  const where = customerId ? "WHERE customer_id = $1" : "";
+  const args = customerId ? [customerId] : [];
+  const { rows } = await query(
+    `SELECT sam_account_name FROM ad_users ${where} ORDER BY scanned_at DESC LIMIT 20000`,
+    args
+  );
+  const map = new Map();
+  rows.forEach((r) => {
+    const account = String(r.sam_account_name || "").trim();
+    if (!account) return;
+    accountAliases(account).forEach((a) => {
+      if (!map.has(a)) map.set(a, account);
+    });
+  });
+  return map;
+}
+
+function parseCredentialLine(line) {
+  const raw = String(line || "").trim();
+  if (!raw) return null;
+  const withTab = raw.split("\t").map(s => s.trim()).filter(Boolean);
+  if (withTab.length >= 2) return { username: withTab[0], password: withTab[1] };
+  const delims = [":", ";", ",", "|"];
+  for (const d of delims) {
+    const parts = raw.split(d).map(s => s.trim()).filter(Boolean);
+    if (parts.length >= 2) return { username: parts[0], password: parts[1] };
+  }
+  return { username: "", password: raw };
+}
+
+function toExclusionSet(source) {
+  const values = Array.isArray(source) ? source : [];
+  const out = new Set();
+  values.forEach((x) => {
+    const lower = String(x || "").trim().toLowerCase();
+    if (!lower) return;
+    out.add(lower);
+    out.add(lower.replace(/^.*\\/, ""));
+    out.add(lower.split("@")[0]);
+    out.add(lower.replace(/^cn=/, "").split(",")[0]);
+  });
+  return out;
+}
+
+function isExcludedIdentity(username, exclusionSet) {
+  const v = String(username || "").trim().toLowerCase();
+  if (!v) return false;
+  const aliases = [v, v.replace(/^.*\\/, ""), v.split("@")[0], v.replace(/^cn=/, "").split(",")[0]];
+  return aliases.some((a) => exclusionSet.has(a));
+}
+
+async function loadScopedExclusions(customerId) {
+  const { rows: settingRows } = await query("SELECT value FROM app_settings WHERE key='audit_params' LIMIT 1");
+  let globalParams = {};
+  try {
+    globalParams = settingRows[0]?.value ? JSON.parse(settingRows[0].value) : {};
+  } catch {
+    globalParams = {};
+  }
+
+  let customerParams = {};
+  if (customerId) {
+    const { rows } = await query("SELECT audit_params FROM customers WHERE id=$1 LIMIT 1", [customerId]);
+    try {
+      customerParams = rows[0]?.audit_params
+        ? (typeof rows[0].audit_params === "string" ? JSON.parse(rows[0].audit_params) : rows[0].audit_params)
+        : {};
+    } catch {
+      customerParams = {};
+    }
+  }
+
+  const globalEx = globalParams?.exceptions || globalParams?.excluded_accounts || [];
+  const customerEx = customerParams?.exceptions || customerParams?.excluded_accounts || [];
+  return toExclusionSet([...globalEx, ...customerEx]);
 }
 
 // ── POST /api/scan/password-list-scan ─────────────────────────────────
 // Accepts uploaded/password-list text and returns weak/known-vulnerable matches.
 router.post("/password-list-scan", authenticate, requireRole("admin", "engineer"), async (req, res) => {
-  const items = parsePasswordList(req.body || {});
-  if (!items.length) return res.status(400).json({ error: "Provide passwords[] or passwords_text" });
+  const body = req.body || {};
+  const typedLines = parsePasswordList(body);
+  const fileLines = await parsePasswordFileBody(body);
+  const items = [...typedLines, ...fileLines].map(s => String(s || "").trim()).filter(Boolean);
+  if (!items.length) {
+    return res.status(400).json({ error: "Provide passwords[]/passwords_text or upload txt/log/csv/pdf/xls/xlsx" });
+  }
 
-  const unique = [...new Set(items.map(p => p.trim()).filter(Boolean))];
+  const exclusionSet = await loadScopedExclusions(body.customer_id);
+  const parsed = items
+    .map(parseCredentialLine)
+    .filter(Boolean)
+    .filter((entry) => !isExcludedIdentity(entry.username, exclusionSet));
+
+  const requireDirectoryUser = body.require_directory_user !== false;
+  const customerId = body.customer_id || null;
+  if (requireDirectoryUser && !customerId) {
+    return res.status(400).json({ error: "Select a customer to validate usernames against AD user directory." });
+  }
+
+  const directoryMap = requireDirectoryUser ? await loadDirectoryAccountMap(customerId) : new Map();
+
+  let directorySkipped = 0;
+  const normalized = parsed
+    .map((entry) => {
+      if (!requireDirectoryUser) return entry;
+      const aliases = accountAliases(entry.username);
+      const mapped = aliases.map((a) => directoryMap.get(a)).find(Boolean);
+      if (!mapped) {
+        directorySkipped++;
+        return null;
+      }
+      return { ...entry, username: mapped };
+    })
+    .filter(Boolean);
+
+  const unique = [...new Map(normalized.map((entry) => [`${String(entry.username || "").toLowerCase()}|${entry.password}`, entry])).values()];
   const matches = unique
-    .map((p) => ({ password: p, result: isExposedPassword(p) }))
+    .map((entry) => ({ ...entry, result: isExposedPassword(entry.password) }))
     .filter((x) => x.result.ok)
-    .map((x) => ({ password: x.password, source: x.result.reason }));
+    .map((x) => ({ username: x.username || null, password: x.password, source: x.result.reason }));
 
   res.json({
     total_checked: unique.length,
     matched: matches.length,
+    excluded_applied: exclusionSet.size > 0,
+    directory_enforced: requireDirectoryUser,
+    directory_accounts_loaded: directoryMap.size,
+    directory_skipped: directorySkipped,
     matches,
   });
 });
