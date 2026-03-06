@@ -21,7 +21,13 @@ const SEV_TO_PRIORITY = {
 export default function CreateTicketModal({ isOpen, onClose, alert, onCreated }) {
   const [form, setForm] = useState({
     title:       alert ? `[${alert.severity.toUpperCase()}] ${alert.message}` : "",
-    description: alert ? `Alert from ${alert.customer_name || alert.cust} at ${alert.ts || new Date().toLocaleString()}.\n\nPlease investigate and remediate.` : "",
+    description: alert ? [
+      `Alert from ${alert.customer_name || alert.cust} at ${alert.ts || new Date().toLocaleString()}.`,
+      alert?.details?.finding_id ? `Finding: ${alert.details.finding_id}` : "",
+      (alert?.details?.affected_users || []).length ? `Affected users: ${(alert.details.affected_users || []).join(", ")}` : "",
+      "",
+      "Please investigate and remediate.",
+    ].filter(Boolean).join("\n") : "",
     priority:    alert ? SEV_TO_PRIORITY[alert.severity] || "medium" : "medium",
     assignee_id: "",
   });

@@ -45,7 +45,7 @@ export default function TicketsPanel() {
     if (filterStat !== "all") params.status   = filterStat;
     if (filterPri  !== "all") params.priority = filterPri;
     ticketsApi.list(params)
-      .then(d => setTickets(Array.isArray(d) ? d : []))
+      .then(d => setTickets(Array.isArray(d) ? d : (Array.isArray(d?.tickets) ? d.tickets : [])))
       .catch(e => setError(e.message))
       .finally(() => setLoading(false));
   };
