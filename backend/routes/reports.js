@@ -168,29 +168,50 @@ router.get("/customer-stats/:customerId", authenticate, async (req, res) => {
 });
 
 // ── Fetch real data from DB ────────────────────────────────────────
-function filterFindingsForType(type, findings) {
-  const id = (f) => String(f.finding_id || "").toUpperCase();
-  const cat = (f) => String(f.category || "").toLowerCase();
-  const title = (f) => String(f.title || "").toLowerCase();
+function findingMatchesType(type, finding) {
+  const id = String(finding.finding_id || "").toUpperCase();
+  const cat = String(finding.category || "").toLowerCase();
+  const title = String(finding.title || "").toLowerCase();
+
+  const isPassword = id.startsWith("AD-PWD-") || ["password", "pwd"].includes(cat) || /password|credential|hash|ntlm|blank|non-expiring|reversible/.test(title);
+  const isAccount = id.startsWith("AD-ACCT-") || ["account", "accounts"].includes(cat) || /stale|inactive|never log|disabled/.test(title);
+  const isPolicy = id.startsWith("AD-GPO-") || ["gpo", "policy", "compliance"].includes(cat) || /policy|gpo|audit|kerberos ticket lifetime/.test(title);
+  const isPrivileged = id.startsWith("AD-PRIV-") || ["privilege", "privileged", "admin"].includes(cat) || /domain admin|enterprise admin|schema admin|kerberoast|as-rep|delegation|admincount/.test(title);
+  const isTrust = id.startsWith("AD-TRUST-") || cat === "trust" || /trust|sid filtering|external/.test(title);
+  const isKerberos = /kerberos|kerberoast|as-rep|ticket/.test(title) || id.includes("KERB") || id === "AD-PRIV-002" || id === "AD-PRIV-003" || id === "AD-GPO-006";
 
   switch (type) {
     case "password_vulnerability":
-      return findings.filter(f => id(f).startsWith("AD-PWD-") || cat(f) === "password");
+      return isPassword;
     case "stale_accounts":
-      return findings.filter(f => id(f).startsWith("AD-ACCT-") || /stale|inactive|never log/.test(title(f)) || cat(f) === "account");
+      return isAccount;
     case "policy_compliance":
-      return findings.filter(f => id(f).startsWith("AD-GPO-") || cat(f) === "gpo" || /policy/.test(title(f)));
+      return isPolicy;
     case "privileged_accounts":
-      return findings.filter(f => id(f).startsWith("AD-PRIV-") || cat(f) === "privilege");
+      return isPrivileged;
     case "compliance_mapping":
-      return findings.filter(f => !!String(f.compliance || "").trim());
+      return !!String(finding.compliance || "").trim();
     case "kerberos_risks":
-      return findings.filter(f => /kerberos|kerberoast|as-rep|ticket/.test(title(f)) || /KERB/.test(id(f)) || title(f).includes("as-rep"));
+      return isKerberos;
     case "trust_analysis":
-      return findings.filter(f => id(f).startsWith("AD-TRUST-") || cat(f) === "trust");
+      return isTrust;
     default:
-      return findings;
+      return true;
   }
+}
+
+function filterFindingsForType(type, findings) {
+  const filtered = findings.filter((f) => findingMatchesType(type, f));
+  if (type === "executive_summary") return findings;
+  return filtered.length ? filtered : findings.filter((f) => {
+    const id = String(f.finding_id || "").toUpperCase();
+    if (type === "password_vulnerability") return id.startsWith("AD-PWD-");
+    if (type === "stale_accounts") return id.startsWith("AD-ACCT-");
+    if (type === "policy_compliance") return id.startsWith("AD-GPO-");
+    if (type === "privileged_accounts") return id.startsWith("AD-PRIV-");
+    if (type === "trust_analysis") return id.startsWith("AD-TRUST-");
+    return false;
+  });
 }
 
 async function fetchReportData(type, customerId, customerName) {
@@ -425,13 +446,11 @@ async function generateCSV(data, filepath, type) {
     columns = ["Finding ID","Title","Severity","CIS v8","NIST 800-53","ISO 27001","SOC 2","MITRE ATT&CK"];
     records = f.map(x => [x.finding_id, x.title, x.severity, x.cis, x.nist, x.iso, x.soc2, x.mitre]);
   } else if (type === "kerberos_risks") {
-    const kf = f.filter(x => x.category === "privilege");
     columns = ["Finding ID","Title","Severity","Users Affected","Affected Count","Risk Score","Remediation"];
-    records = kf.map(x => [x.finding_id, x.title, x.severity, x.users_affected, x.affected, x.risk_score, x.remediation]);
+    records = f.map(x => [x.finding_id, x.title, x.severity, x.users_affected, x.affected, x.risk_score, x.remediation]);
   } else if (type === "trust_analysis") {
-    const tf = f.filter(x => x.category === "trust");
     columns = ["Finding ID","Title","Severity","Users Affected","Affected Count","Remediation"];
-    records = tf.map(x => [x.finding_id, x.title, x.severity, x.users_affected, x.affected, x.remediation]);
+    records = f.map(x => [x.finding_id, x.title, x.severity, x.users_affected, x.affected, x.remediation]);
   } else {
     columns = ["Finding ID","Title","Severity","Category","Users Affected","Affected Count","Risk Score","Compliance","Remediation"];
     records = f.map(x => [x.finding_id, x.title, x.severity, x.category, x.users_affected, x.affected, x.risk_score, x.compliance, x.remediation]);

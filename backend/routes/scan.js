@@ -40,8 +40,8 @@ const WEAK_PASSWORDS = new Set([
 ]);
 
 function parsePasswordList(body) {
-  if (Array.isArray(body.passwords)) return body.passwords.map(String);
-  if (typeof body.passwords_text === "string") return body.passwords_text.split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+  if (Array.isArray(body.passwords)) return body.passwords.map(String).map(s => s.trim()).filter(Boolean);
+  if (typeof body.passwords_text === "string") return body.passwords_text.split(/[\r\n,;]+/).map(s => s.trim()).filter(Boolean);
   return [];
 }
 
@@ -51,14 +51,13 @@ router.post("/password-list-scan", authenticate, requireRole("admin", "engineer"
   const items = parsePasswordList(req.body || {});
   if (!items.length) return res.status(400).json({ error: "Provide passwords[] or passwords_text" });
 
-  const matches = items
-    .map(p => p.trim())
-    .filter(Boolean)
+  const unique = [...new Set(items.map(p => p.trim()).filter(Boolean))];
+  const matches = unique
     .filter(p => WEAK_PASSWORDS.has(p.toLowerCase()))
     .map(p => ({ password: p, source: "known_weak_list" }));
 
   res.json({
-    total_checked: items.length,
+    total_checked: unique.length,
     matched: matches.length,
     matches,
   });

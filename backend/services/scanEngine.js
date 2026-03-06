@@ -107,6 +107,49 @@ function resolveFilter(filter, dcDN) {
     .replace(/__365_DAYS_AGO__/g, daysAgoAD(365));
 }
 
+async function getAutomationUserId() {
+  const { rows } = await query(
+    `SELECT id FROM users WHERE is_active = true ORDER BY CASE WHEN role='admin' THEN 0 WHEN role='engineer' THEN 1 ELSE 2 END, created_at ASC LIMIT 1`
+  );
+  return rows[0]?.id || null;
+}
+
+async function createAutoTicketForAlert({ alertId, customerId, customerName, finding }) {
+  if (!alertId || !finding) return null;
+  if ((finding.affected_count || 0) <= 0) return null;
+
+  const { rows: existing } = await query(
+    "SELECT id FROM tickets WHERE alert_id = $1 AND status IN ('open','in_progress') LIMIT 1",
+    [alertId]
+  );
+  if (existing.length) return existing[0].id;
+
+  const createdBy = await getAutomationUserId();
+  if (!createdBy) return null;
+
+  const { rows: seqRows } = await query("SELECT COUNT(*) FROM tickets WHERE created_at::date = CURRENT_DATE");
+  const seq = String(parseInt(seqRows[0].count, 10) + 1).padStart(4, "0");
+  const dateStr = new Date().toISOString().slice(0, 10).replace(/-/g, "");
+  const ticketNo = `TKT-${dateStr}-${seq}`;
+
+  const priority = finding.severity === "critical" ? "critical" : finding.severity === "high" ? "high" : "medium";
+  const title = `[${finding.finding_id}] ${finding.title}`;
+  const description = [
+    `Auto-created from scan finding ${finding.finding_id}.`,
+    `Severity: ${finding.severity}`,
+    `Affected accounts: ${finding.affected_count}`,
+    finding.remediation ? `Remediation: ${finding.remediation}` : "",
+  ].filter(Boolean).join("\n");
+  const { rows } = await query(
+    `INSERT INTO tickets (ticket_no, title, description, priority, customer_id, customer_name, alert_id, created_by)
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+     RETURNING id`,
+    [ticketNo, title, description, priority, customerId, customerName, alertId, createdBy]
+  );
+
+  return rows[0]?.id || null;
+}
+
 // ─────────────────────────────────────────────────────────────────────
 // LDAP client helpers
 // ─────────────────────────────────────────────────────────────────────
@@ -574,8 +617,8 @@ async function runScan(customerId) {
         continue;
       }
 
-      await query(
-        "INSERT INTO alerts (customer_id, customer_name, message, severity, details) VALUES ($1,$2,$3,$4,$5)",
+      const { rows: insertedAlert } = await query(
+        "INSERT INTO alerts (customer_id, customer_name, message, severity, details) VALUES ($1,$2,$3,$4,$5) RETURNING id",
         [
           customerId, customer.name,
           "[" + f.finding_id + "] " + f.title + " — " + f.affected_count + " account(s) affected",
@@ -595,6 +638,14 @@ async function runScan(customerId) {
           }),
         ]
       );
+
+      await createAutoTicketForAlert({
+        alertId: insertedAlert[0]?.id,
+        customerId,
+        customerName: customer.name,
+        finding: f,
+      }).catch((e) => logger.warn("Auto-ticket creation failed: " + e.message));
+
       createdAlerts.push({
         finding_id: f.finding_id,
         title: f.title,

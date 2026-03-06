@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { THEME as T } from "../../constants/theme";
 import { PageHeader, Btn, Table, TR, TD } from "../shared";
-import { reportsApi, customersApi, downloadReport } from "../../utils/api";
+import { reportsApi, customersApi, scanApi, downloadReport } from "../../utils/api";
 
 const REPORT_TYPES = [
   { type:"executive_summary",     title:"Executive Summary",        icon:"📊", color:"#0ea5e9", desc:"High-level risk overview for management"             },
@@ -23,6 +23,9 @@ export default function ReportsPanel() {
   const [downloading,  setDownloading]  = useState(null); // history id
   const [selectedCust, setSelectedCust] = useState("");
   const [custName,     setCustName]     = useState("");
+  const [passwordText, setPasswordText] = useState("");
+  const [passwordResult, setPasswordResult] = useState(null);
+  const [passwordChecking, setPasswordChecking] = useState(false);
 
   const loadHistory = () =>
     reportsApi.history().then(h => setHistory(Array.isArray(h) ? h : [])).catch(() => {});
@@ -68,6 +71,29 @@ export default function ReportsPanel() {
     setSelectedCust(id);
     const c = customers.find(x => x.id === id);
     setCustName(c?.name || "");
+  };
+
+  const handlePasswordFile = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const text = await file.text().catch(() => "");
+    setPasswordText(text);
+    e.target.value = "";
+  };
+
+  const checkPasswordList = async () => {
+    if (!passwordText.trim()) {
+      alert("Upload a notepad/txt password list or paste passwords first.");
+      return;
+    }
+    setPasswordChecking(true);
+    try {
+      const data = await scanApi.passwordListScan({ passwords_text: passwordText });
+      setPasswordResult(data);
+    } catch (err) {
+      alert("Password list check failed: " + err.message);
+    }
+    setPasswordChecking(false);
   };
 
   return (
@@ -118,6 +144,39 @@ export default function ReportsPanel() {
             </div>
           );
         })}
+      </div>
+
+
+      <div style={{ background:T.colors.card, border:`1px solid ${T.colors.border}`, borderRadius:8, padding:16, display:"flex", flexDirection:"column", gap:12 }}>
+        <div style={{ fontSize:12, fontWeight:700 }}>Exposed Password List Check</div>
+        <div style={{ fontSize:11, color:T.colors.muted }}>Upload/paste a notepad list (one password per line). The scanner matches entries against known weak/exposed passwords.</div>
+        <textarea
+          value={passwordText}
+          onChange={(e) => setPasswordText(e.target.value)}
+          placeholder="password
+admin123
+Summer2024!"
+          style={{ minHeight:120, resize:"vertical", background:T.colors.surface, border:`1px solid ${T.colors.border}`, borderRadius:6, color:T.colors.text, padding:10, fontSize:12, fontFamily:T.fonts.mono }}
+        />
+        <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
+          <label>
+            <Btn variant="secondary" size="sm">📄 Upload .txt/.log</Btn>
+            <input type="file" accept=".txt,.log,.csv" style={{ display:"none" }} onChange={handlePasswordFile} />
+          </label>
+          <Btn variant="ok" size="sm" onClick={checkPasswordList} disabled={passwordChecking}>{passwordChecking ? "Checking…" : "Check Password Exposure"}</Btn>
+        </div>
+        {passwordResult && (
+          <div style={{ background:T.colors.surface, border:`1px solid ${T.colors.border}`, borderRadius:6, padding:10 }}>
+            <div style={{ fontSize:11, color:T.colors.muted, marginBottom:6 }}>
+              Checked: <strong style={{ color:T.colors.text }}>{passwordResult.total_checked}</strong> · Matched: <strong style={{ color: passwordResult.matched > 0 ? T.colors.danger : T.colors.ok }}>{passwordResult.matched}</strong>
+            </div>
+            <div style={{ maxHeight:140, overflow:"auto", fontSize:11, fontFamily:T.fonts.mono }}>
+              {(passwordResult.matches || []).length ? passwordResult.matches.map((m, i) => (
+                <div key={i} style={{ padding:"4px 0", borderBottom:`1px dashed ${T.colors.border}` }}>{m.password} <span style={{ color:T.colors.muted }}>({m.source})</span></div>
+              )) : <div style={{ color:T.colors.ok }}>No exposed passwords matched.</div>}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Report history */}

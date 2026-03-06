@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { THEME as T } from "../../constants/theme";
 import { Btn, Modal, Input } from "../shared";
 import { logoApi, customersApi, settingsApi, scanApi, usersApi } from "../../utils/api";
@@ -118,6 +118,7 @@ export default function ConnectionManager({ logoUrl, refreshLogo, refreshBrandin
   const [savedMsg,     setSavedMsg]     = useState("");
   const [scanningId,   setScanningId]   = useState(null);
   const [logoUploading,setLogoUploading]= useState(false);
+  const logoInputRef = useRef(null);
 
   const showSaved = (msg="✅ Saved") => { setSavedMsg(msg); setTimeout(() => setSavedMsg(""), 3500); };
 
@@ -628,10 +629,8 @@ export default function ConnectionManager({ logoUrl, refreshLogo, refreshBrandin
             </div>
             {isAdmin && (
               <div style={{ display:"flex", gap:10, alignItems:"center", flexWrap:"wrap" }}>
-                <label>
-                  <Btn variant="secondary">{logoUploading?"Uploading…":"⬆ Upload Logo"}</Btn>
-                  <input type="file" accept=".png,.jpg,.jpeg,.svg,.webp" style={{ display:"none" }} onChange={uploadLogo} />
-                </label>
+                <Btn variant="secondary" onClick={() => logoInputRef.current?.click()} disabled={logoUploading}>{logoUploading?"Uploading…":"⬆ Upload Logo"}</Btn>
+                <input ref={logoInputRef} type="file" accept=".png,.jpg,.jpeg,.svg,.webp" style={{ display:"none" }} onChange={uploadLogo} />
                 {logoUrl && <Btn variant="danger" onClick={async () => { await logoApi.remove().catch(() => {}); if (refreshLogo) refreshLogo(null); showSaved("✅ Logo removed"); }}>Remove</Btn>}
               </div>
             )}

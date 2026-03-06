@@ -115,6 +115,7 @@ export const scanApi = {
   testConnection: (body)       => api.post('/scan/test-connection', body),
   library:        (params)     => api.get('/scan/library', params),
   libraryStats:   ()           => api.get('/scan/library/stats'),
+  passwordListScan:(body)      => api.post('/scan/password-list-scan', body),
 };
 
 export const settingsApi = {
