@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { THEME as T } from "../../constants/theme";
 import { PageHeader, Btn, Table, TR, TD } from "../shared";
 import { reportsApi, customersApi, scanApi, downloadReport } from "../../utils/api";
+import { exportCSV } from "../../utils/exportUtils";
 
 const REPORT_TYPES = [
   { type:"executive_summary",     title:"Executive Summary",        icon:"📊", color:"#0ea5e9", desc:"High-level risk overview for management"             },
@@ -73,27 +74,63 @@ export default function ReportsPanel() {
     setCustName(c?.name || "");
   };
 
+  const [passwordFile, setPasswordFile] = useState(null);
+
+
+
+  const toBase64 = (file) => new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const out = String(reader.result || "");
+      resolve(out.includes(",") ? out.split(",")[1] : out);
+    };
+    reader.onerror = () => reject(new Error("Failed to read file"));
+    reader.readAsDataURL(file);
+  });
+
   const handlePasswordFile = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const text = await file.text().catch(() => "");
-    setPasswordText(text);
+    setPasswordFile(file);
+    if (["text/plain", "text/csv", "application/csv"].includes(file.type) || /\.(txt|log|csv)$/i.test(file.name || "")) {
+      const text = await file.text().catch(() => "");
+      setPasswordText(text);
+    }
     e.target.value = "";
   };
 
   const checkPasswordList = async () => {
-    if (!passwordText.trim()) {
-      alert("Upload a notepad/txt password list or paste passwords first.");
+    if (!passwordText.trim() && !passwordFile) {
+      alert("Upload/paste a password list first.");
       return;
     }
     setPasswordChecking(true);
     try {
-      const data = await scanApi.passwordListScan({ passwords_text: passwordText });
+      let body = { passwords_text: passwordText, customer_id: selectedCust || undefined };
+      if (passwordFile) {
+        const b64 = await toBase64(passwordFile);
+        body = {
+          ...body,
+          file_name: passwordFile.name,
+          file_mime: passwordFile.type || "",
+          file_content_base64: b64,
+        };
+      }
+      const data = await scanApi.passwordListScan(body);
       setPasswordResult(data);
     } catch (err) {
       alert("Password list check failed: " + err.message);
     }
     setPasswordChecking(false);
+  };
+
+  const downloadPasswordMatches = () => {
+    if (!passwordResult?.matches?.length) return;
+    exportCSV(passwordResult.matches.map((m) => ({
+      Username: m.username || "",
+      Password: m.password,
+      Source: m.source,
+    })), `matched_passwords_${Date.now()}.csv`);
   };
 
   return (
@@ -149,7 +186,7 @@ export default function ReportsPanel() {
 
       <div style={{ background:T.colors.card, border:`1px solid ${T.colors.border}`, borderRadius:8, padding:16, display:"flex", flexDirection:"column", gap:12 }}>
         <div style={{ fontSize:12, fontWeight:700 }}>Exposed Password List Check</div>
-        <div style={{ fontSize:11, color:T.colors.muted }}>Upload/paste a notepad list (one password per line). The scanner matches entries against known weak/exposed passwords.</div>
+        <div style={{ fontSize:11, color:T.colors.muted }}>Upload/paste a list (one password per line, or username:password). Supports txt/log/csv/pdf/xls/xlsx and matches entries against known weak/exposed passwords.</div>
         <textarea
           value={passwordText}
           onChange={(e) => setPasswordText(e.target.value)}
@@ -160,10 +197,11 @@ Summer2024!"
         />
         <div style={{ display:"flex", gap:8, flexWrap:"wrap" }}>
           <label>
-            <Btn variant="secondary" size="sm">📄 Upload .txt/.log</Btn>
-            <input type="file" accept=".txt,.log,.csv" style={{ display:"none" }} onChange={handlePasswordFile} />
+            <Btn variant="secondary" size="sm">📄 Upload file</Btn>
+            <input type="file" accept=".txt,.log,.csv,.pdf,.xls,.xlsx,application/pdf,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv,text/plain" style={{ display:"none" }} onChange={handlePasswordFile} />
           </label>
           <Btn variant="ok" size="sm" onClick={checkPasswordList} disabled={passwordChecking}>{passwordChecking ? "Checking…" : "Check Password Exposure"}</Btn>
+          <Btn variant="secondary" size="sm" onClick={downloadPasswordMatches} disabled={!passwordResult?.matches?.length}>⬇ Download Matches</Btn>
         </div>
         {passwordResult && (
           <div style={{ background:T.colors.surface, border:`1px solid ${T.colors.border}`, borderRadius:6, padding:10 }}>
