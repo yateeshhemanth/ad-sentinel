@@ -12,6 +12,7 @@ const REPORT_TYPES = [
   { type:"compliance_mapping",     title:"Compliance Mapping",       icon:"🗂️", color:"#0ea5e9", desc:"Findings mapped to CIS, NIST, ISO 27001, SOC2, MITRE" },
   { type:"kerberos_risks",         title:"Kerberos Attack Surface",  icon:"🎫", color:"#ef4444", desc:"Kerberoastable and AS-REP roastable accounts"         },
   { type:"trust_analysis",         title:"Trust Analysis",           icon:"🔗", color:"#a78bfa", desc:"External trusts and SID filtering status"             },
+  { type:"ad_health_dashboard",    title:"AD Health Dashboard",      icon:"🏥", color:"#22c55e", desc:"DC/user/GPO-oriented health summary inspired by legacy AD reports" },
 ];
 
 export default function ReportsPanel() {
