@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-route
 import { useState, useEffect } from "react";
 import { AuthProvider, useAuth } from "./context/AuthContext";
 import { THEME as T } from "./constants/theme";
+import { alertsApi } from "./utils/api";
 
 // ── Pages / Panels ─────────────────────────────────────────────────
 import Login                  from "./components/Auth/Login";
@@ -54,7 +55,22 @@ function SettingsPage() {
 }
 
 function AppRoutes() {
-  const [alertCount, setAlertCount] = useState(3); // replace with live count
+  const [alertCount, setAlertCount] = useState(0);
+
+  useEffect(() => {
+    let mounted = true;
+    const load = async () => {
+      try {
+        const rows = await alertsApi.list({ is_acked: "false" });
+        if (mounted) setAlertCount(Array.isArray(rows) ? rows.length : 0);
+      } catch {
+        if (mounted) setAlertCount(0);
+      }
+    };
+    load();
+    const t = setInterval(load, 15000);
+    return () => { mounted = false; clearInterval(t); };
+  }, []);
 
   return (
     <Routes>
